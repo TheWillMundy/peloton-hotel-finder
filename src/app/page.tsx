@@ -1,103 +1,107 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import CitySearchInput from '@/app/components/CitySearchInput';
+import HotelResultCard from '@/app/components/HotelResultCard';
+import InfiniteScrollTrigger from '@/app/components/InfiniteScrollTrigger';
+import { ClientHotel } from '@/lib/pelotonAPI';
+
+const PAGE_SIZE = 250;
+
+async function fetchHotelsByCity(city: string): Promise<ClientHotel[]> {
+  if (!city) {
+    return [];
+  }
+  const response = await fetch(`/api/hotels?city=${encodeURIComponent(city)}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
+    throw new Error(errorData.message || `Error fetching hotels: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export default function HomePage() {
+  const [currentCity, setCurrentCity] = useState<string>('');
+  const [visibleItemsCount, setVisibleItemsCount] = useState<number>(PAGE_SIZE);
+
+  const {
+    data: allHotels,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<ClientHotel[], Error>({
+    queryKey: ['hotels', currentCity],
+    queryFn: () => fetchHotelsByCity(currentCity),
+    enabled: !!currentCity,
+    retry: 1,
+  });
+
+  const displayedHotels = useMemo(() => {
+    return allHotels ? allHotels.slice(0, visibleItemsCount) : [];
+  }, [allHotels, visibleItemsCount]);
+
+  const hasMoreHotels = useMemo(() => {
+    return allHotels ? visibleItemsCount < allHotels.length : false;
+  }, [allHotels, visibleItemsCount]);
+
+  const loadMoreHotels = () => {
+    if (hasMoreHotels) {
+      setVisibleItemsCount(prevCount => prevCount + PAGE_SIZE);
+    }
+  };
+
+  const handleSearch = (city: string) => {
+    if (city.trim().toLowerCase() !== currentCity.toLowerCase()) {
+      setVisibleItemsCount(PAGE_SIZE);
+    }
+    setCurrentCity(city.trim());
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="container mx-auto p-4">
+      <header className="mb-8 text-center">
+        <h1 className="text-4xl font-bold text-gray-800">Peloton Hotel Finder</h1>
+        <p className="text-xl text-gray-600">Find hotels with Peloton bikes quickly and easily.</p>
+      </header>
+      
+      <section className="max-w-xl mx-auto mb-8">
+        <CitySearchInput onSearch={handleSearch} isLoading={isLoading} />
+      </section>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+      <section id="search-results">
+        {isLoading && !allHotels && <p className="text-center text-gray-600">Loading hotels...</p>}
+        {isError && (
+          <div className="text-center text-red-600 bg-red-100 p-4 rounded-md">
+            <p className="font-semibold">Error fetching hotels:</p>
+            <p>{error?.message || "An unexpected error occurred."}</p>
+          </div>
+        )}
+        {allHotels && allHotels.length === 0 && currentCity && !isLoading && !isError && (
+          <p className="text-center text-gray-600">No hotels found for &quot;{currentCity}&quot;. Try a different city.</p>
+        )}
+        {displayedHotels && displayedHotels.length > 0 && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-semibold text-gray-700">
+              Hotels in {currentCity} ({displayedHotels.length} of {allHotels?.length || 0} shown)
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {displayedHotels.map((hotel) => (
+                <HotelResultCard key={hotel.id} hotel={hotel} />
+              ))}
+            </div>
+            <InfiniteScrollTrigger 
+              onVisible={loadMoreHotels} 
+              hasMore={hasMoreHotels} 
+              isLoadingNext={isLoading && !!allHotels}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          </div>
+        )}
+      </section>
+
+      <section id="map-view" className="mt-8">
+        {/* Map will be displayed here */}
+      </section>
+    </main>
   );
 }
