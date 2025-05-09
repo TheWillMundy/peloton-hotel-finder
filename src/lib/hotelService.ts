@@ -4,7 +4,7 @@ import {
   type ClientHotel,
 } from "./pelotonAPI";
 import { unstable_cache as nextCache } from "next/cache";
-import Fuse from "fuse.js";
+import Fuse, { type IFuseOptions } from "fuse.js";
 
 interface CityBbox {
   coords: [[number, number], [number, number], [number, number], [number, number]];
@@ -68,15 +68,19 @@ export const getCachedHotelsByCity = async (
   }
   const bboxJson = JSON.stringify(bbox);
 
+  // TODO: Revert caching changes - Temporarily bypassing unstable_cache for debugging
+  // console.log(`[hotelService] Caching TEMPORARILY BYPASSED for ${normalizedCity}. Fetching fresh data.`);
+  // return getAndTransformHotelsForCity(normalizedCity, bboxJson);
+
   // Use unstable_cache to cache the transformed hotel data for the city.
   const cachedFetcher = nextCache(
     async (currentCity: string, currentBboxJson: string) => {
-      console.log(`[hotelService] Cache miss for ${currentCity}. Fetching fresh data.`);
+      // console.log(`[hotelService] Cache miss for ${currentCity}. Fetching fresh data.`); // Log can be noisy, optionally re-enable for debug
       return getAndTransformHotelsForCity(currentCity, currentBboxJson);
     },
     [`peloton-hotels-${normalizedCity}`], // Cache key specific to the city
     {
-      revalidate: 3600, // 1 hour
+      revalidate: 3600, // Restored caching to 1 hour (was false, previously 0 for bypass)
       tags: [`peloton-city-${normalizedCity}`], // For on-demand revalidation by tag
     }
   );
@@ -102,7 +106,7 @@ export const findHotelByFuzzyMatch = (
     return { matchConfidence: null, hotel: null, hasBikes: false };
   }
 
-  const fuseOptions: Fuse.IFuseOptions<ClientHotel> = {
+  const fuseOptions: IFuseOptions<ClientHotel> = {
     includeScore: true,
     keys: ["name"], // Key to search in
     threshold: fuseThreshold,

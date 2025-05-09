@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ChevronLeft, FilterIcon } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/lib/utils';
 import MapboxMap from '@/app/components/MapboxMap';
@@ -16,10 +16,23 @@ import { ClientHotel } from '@/lib/pelotonAPI';
 import { ViewModeProvider, useViewMode } from '@/app/contexts/ViewModeContext';
 import HotelDetailModal from '@/app/components/HotelDetailModal';
 import BottomSheet, { BottomSheetState } from '@/app/components/BottomSheet';
+import { FilterChips, Filters } from '@/app/components/FilterChips';
+
+// Define primary loyalty programs, could also be imported from FilterChips if kept there
+const PRIMARY_LOYALTY_PROGRAMS = [
+  "Accor Le Club", "Best Western Rewards", "Choice Privileges", "Hilton Honors", 
+  "IHG Rewards Club", "Marriott Bonvoy", "Radisson Rewards", "World of Hyatt", "Wyndham Rewards"
+];
 
 const MOBILE_BREAKPOINT = 768;
 const DESKTOP_SIDEBAR_WIDTH = 420;
 const MOBILE_SEARCH_BAR_HEIGHT = 60; // Approximate height for the search bar on mobile
+
+// export interface Filters { // Temporary definition - REMOVED as it's now imported
+//   inRoom: boolean;
+//   inGym: boolean;
+//   loyaltyPrograms: string[];
+// }
 
 // Renaming SearchPanelPlaceholder to HotelListPanel for clarity
 const HotelListPanel = ({ onHotelHover, onHotelSelect, hotels, hoveredHotelId, isMobile = false }: { 
@@ -76,6 +89,13 @@ function HotelSearchPageContent() {
   const [mapReady, setMapReady] = useState(false);
   const [initialPaddingSet, setInitialPaddingSet] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState<ClientHotel | null>(null);
+  const [showFilters, setShowFilters] = useState(false); // State to toggle filter display
+
+  const [activeFilters, setActiveFilters] = useState<Filters>({
+    inRoom: false,
+    inGym: false,
+    loyaltyPrograms: [],
+  });
   
   const { viewMode, setViewMode } = useViewMode();
 
@@ -125,11 +145,9 @@ function HotelSearchPageContent() {
 
   useEffect(() => {
     if (isFetchSuccess && apiResponse) {
-      setHotels(apiResponse.hotels || []); // Set hotels from the response object
+      setHotels(apiResponse.hotels || []); // Set raw hotels from the response object
       if (apiResponse.cityCenter) {
-        setCenter(apiResponse.cityCenter); // Set center from the response object
-        // Optionally set zoom here if needed
-        // setZoom(12);
+        setCenter(apiResponse.cityCenter); 
       }
     } else if (isFetchError && fetchError) {
       console.error("Failed to fetch hotels:", fetchError.message);
@@ -140,6 +158,90 @@ function HotelSearchPageContent() {
     // if setCenter itself causes a re-render that refetches. 
     // The map component effect handles flying to the new center.
   }, [isFetchSuccess, apiResponse, isFetchError, fetchError, setCenter]); 
+
+  const filterChipOptions = useMemo(() => {
+    if (!hotels) return [...PRIMARY_LOYALTY_PROGRAMS, "Other"]; // Default list if no hotels
+    
+    const options = new Set<string>([...PRIMARY_LOYALTY_PROGRAMS]);
+
+    let hasActualOther = false;
+    hotels.forEach(hotel => {
+      if (hotel.loyaltyProgram === "Other") {
+        hasActualOther = true;
+        if (hotel.brand && !PRIMARY_LOYALTY_PROGRAMS.includes(hotel.brand)) {
+          // If it's 'Other' and the original brand isn't a known main program, add the specific brand
+          options.add(hotel.brand);
+        }
+      } else if (hotel.loyaltyProgram && !PRIMARY_LOYALTY_PROGRAMS.includes(hotel.loyaltyProgram)){
+        // This case handles if getLoyaltyProgram returned the brand_name itself because it wasn't in brandToLoyaltyMap
+        options.add(hotel.loyaltyProgram);
+      }
+      // else, it's a primary program, already added
+    });
+
+    if (hasActualOther || hotels.some(h => h.loyaltyProgram === "Other")) {
+        options.add("Other"); // Ensure "Other" is present if there are any 'Other' hotels
+    }
+    
+    return Array.from(options).sort((a, b) => {
+        // Keep "Other" at the end
+        if (a === "Other") return 1;
+        if (b === "Other") return -1;
+        return a.localeCompare(b);
+    });
+  }, [hotels]);
+
+  const displayedHotels = useMemo(() => {
+    let filtered = [...hotels];
+
+    // Apply loyalty program filters
+    if (activeFilters.loyaltyPrograms.length > 0) {
+      filtered = filtered.filter(hotel => {
+        return activeFilters.loyaltyPrograms.some(filterProgram => {
+          if (filterProgram === "Other") {
+            return hotel.loyaltyProgram === "Other";
+          }
+          // If the filterProgram is a known primary loyalty program
+          if (PRIMARY_LOYALTY_PROGRAMS.includes(filterProgram)) {
+            return hotel.loyaltyProgram === filterProgram;
+          }
+          // If the filterProgram is a specific brand (that was mapped to 'Other' or was a direct fallback)
+          return hotel.brand === filterProgram && 
+                 (hotel.loyaltyProgram === "Other" || hotel.loyaltyProgram === hotel.brand);
+        });
+      });
+    }
+
+    // Apply bike location filters
+    if (activeFilters.inRoom) {
+      filtered = filtered.filter(hotel => hotel.in_room);
+    }
+    if (activeFilters.inGym) {
+      // If inRoom is also selected, this acts as an AND.
+      // If only inGym is selected, it finds hotels with in_gym (could also be in_room).
+      // If the intent is "only in gym and not in room", the logic would need adjustment.
+      // Current: shows if it has gym bikes, regardless of room bikes if inGym is true.
+      filtered = filtered.filter(hotel => hotel.in_gym);
+    }
+
+    // Sorting
+    filtered.sort((a, b) => {
+      // 1. In-room bikes (true first)
+      if (a.in_room !== b.in_room) {
+        return a.in_room ? -1 : 1;
+      }
+      // 2. In-gym bikes (true first)
+      if (a.in_gym !== b.in_gym) {
+        return a.in_gym ? -1 : 1;
+      }
+      // 3. Distance (ascending, nulls last)
+      if (a.distance_m === null) return 1;
+      if (b.distance_m === null) return -1;
+      return a.distance_m - b.distance_m;
+    });
+
+    return filtered;
+  }, [hotels, activeFilters]);
 
   const handleHotelHover = useCallback((id: number | null) => {
     if (hoverTimeoutRef.current) {
@@ -314,6 +416,21 @@ function HotelSearchPageContent() {
 
   const initialSheetStateForMobile = isPanelOpen ? 'peek' : 'closed';
 
+  const handleSearch = (city: string) => {
+    setCurrentCity(city);
+    setHotels([]); 
+    setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] }); 
+    setShowFilters(false); // Hide filters on new search for cleaner UI
+  };
+
+  const listViewContent = (
+    <ListView 
+      hotels={displayedHotels}
+      isLoading={isLoadingHotels}
+      onHotelSelect={handleHotelSelect}
+    />
+  );
+
   return (
     <div className="relative h-screen w-full overflow-hidden bg-gray-100">
       {/* Mobile Search Bar - Floating & Centered with background */}
@@ -321,7 +438,7 @@ function HotelSearchPageContent() {
         <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 pointer-events-none">
           <div className="w-full max-w-md pointer-events-auto">
             <CitySearchInput 
-                onSearch={(city: string) => setCurrentCity(city)} 
+                onSearch={handleSearch} 
                 isLoading={isLoadingHotels}
                 className="bg-white p-3 rounded-xl shadow-xl" // Added bg-white, padding, and more pronounced rounded corners
             />
@@ -348,19 +465,25 @@ function HotelSearchPageContent() {
             viewMode === 'map' && isPanelOpen && 'pr-14' 
           )}>
             <CitySearchInput 
-                onSearch={(city: string) => setCurrentCity(city)} 
+                onSearch={handleSearch} 
                 isLoading={isLoadingHotels}
             />
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-2">
             {viewMode === "list" ? (
               <ListView 
-                hotels={hotels}
+                hotels={displayedHotels}
                 isLoading={isLoadingHotels}
                 onHotelSelect={handleHotelSelect}
               />
             ) : (
-              <HotelListPanel hotels={hotels} onHotelHover={handleHotelHover} onHotelSelect={handleHotelSelect} hoveredHotelId={hoveredHotelId} isMobile={isMobile} />
+              <HotelListPanel 
+                hotels={displayedHotels}
+                onHotelHover={handleHotelHover} 
+                onHotelSelect={handleHotelSelect} 
+                hoveredHotelId={hoveredHotelId} 
+                isMobile={isMobile} 
+              />
             )}
           </div>
 
@@ -405,7 +528,7 @@ function HotelSearchPageContent() {
         (viewMode === "list" && !isMobile) && "opacity-20 pointer-events-none"
       )}>
         <MapboxMap 
-          hotels={hotels} 
+          hotels={displayedHotels} 
           mapRef={mapRef} 
           hoveredHotelId={hoveredHotelId}
           onMarkerClick={handleHotelSelect}
@@ -418,10 +541,9 @@ function HotelSearchPageContent() {
       <ViewToggle 
         activeView={viewMode}
         onChange={handleViewChange}
-        // Hide ViewToggle on mobile for now, as bottom sheet takes over list functionality
         className={cn(
-            "absolute z-30 top-8 right-8 bg-white",
-            isMobile && "hidden" 
+            "absolute z-30 top-8 right-8 bg-white shadow-md rounded-md p-1" // Adjusted styling, ensure visibility
+            // isMobile && "hidden" // Removed to keep toggle visible on mobile
         )}
       />
 
@@ -430,6 +552,34 @@ function HotelSearchPageContent() {
           hotel={selectedHotel} 
           onClose={handleCloseModal} 
         />
+      )}
+
+      {/* List View (Full Screen on Mobile, Overlay on Desktop) */}
+      {viewMode === 'list' && (
+        <div className={cn(
+          "fixed inset-0 z-30 bg-white dark:bg-gray-900 md:inset-4 md:rounded-xl md:shadow-2xl overflow-y-auto",
+          isMobile ? "pt-16" : "pt-4" // Adjust top padding for search bar space
+        )}>
+          <div className={cn(
+            "sticky top-0 bg-white dark:bg-gray-900 z-10 px-4 pt-4 pb-2 md:pb-4",
+            isMobile ? "fixed w-full top-0 left-0 right-0 shadow-md" : ""
+          )}>
+             <div className="flex items-center justify-between">
+                <CitySearchInput onSearch={handleSearch} isLoading={isLoadingHotels} />
+                 <Button variant="ghost" size="icon" onClick={() => setShowFilters(!showFilters)} className="ml-2">
+                  <FilterIcon className="h-5 w-5" />
+                </Button>
+              </div>
+              {showFilters && (
+                 <div className="mt-2">
+                   <FilterChips activeFilters={activeFilters} onFilterChange={setActiveFilters} availableLoyaltyPrograms={filterChipOptions} />
+                </div>
+              )}
+          </div>
+          <div className={isMobile ? "mt-10 md:mt-0" : ""}> {/* Add margin-top for mobile to account for fixed search bar */} 
+            {listViewContent}
+          </div>
+        </div>
       )}
     </div>
   );

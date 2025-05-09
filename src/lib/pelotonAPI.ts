@@ -76,12 +76,90 @@ export interface ClientHotel {
   lng: number;
   distance_m: number | null; // Can be null if user location not available
   brand: string;
+  loyaltyProgram: string; // Added for normalized loyalty program
   total_bikes: number;
   in_gym: boolean;
   in_room: boolean;
   bike_features: string[];
   url: string | null;
   tel: string | null;
+}
+
+const brandToLoyaltyMap: { [key: string]: string } = {
+  // Accor
+  "Accor Live Limitless (ALL)": "Accor Le Club",
+
+  // Best Western
+  "Best Western": "Best Western Rewards",
+  "Best Western Plus": "Best Western Rewards",
+  "Best Western Rewards": "Best Western Rewards",
+
+  // Choice Privileges
+  "Cambria Hotels": "Choice Privileges",
+  "Choice Privileges": "Choice Privileges",
+  "Choice Priviliges": "Choice Privileges", // Typo from Peloton's list
+
+  // Hilton Honors
+  "DoubleTree by Hilton": "Hilton Honors",
+  "Hampton by Hilton": "Hilton Honors",
+  "Hampton Inn & Suites": "Hilton Honors",
+  "Hilton": "Hilton Honors",
+  "Hilton Garden Inn": "Hilton Honors",
+  "Hilton Honors": "Hilton Honors",
+  "Hilton Tempo": "Hilton Honors",
+  "Home2 Suites": "Hilton Honors",
+  "Homewood Suites": "Hilton Honors",
+  "Tapestry Collection": "Hilton Honors",
+  "Tru by Hilton": "Hilton Honors",
+
+  // IHG Rewards Club
+  "Holiday Inn": "IHG Rewards Club",
+  "Kimpton": "IHG Rewards Club",
+  "IHG Rewards": "IHG Rewards Club",
+
+  // Marriott Bonvoy
+  "AC Hotel": "Marriott Bonvoy",
+  "Courtyard Marriott": "Marriott Bonvoy",
+  "Delta Hotel": "Marriott Bonvoy",
+  "Le Meridien": "Marriott Bonvoy",
+  "Marriott": "Marriott Bonvoy",
+  "Marriott Bonvoy": "Marriott Bonvoy",
+  "Renaissance": "Marriott Bonvoy",
+  "Residence Inn": "Marriott Bonvoy",
+  "Ritz-Carlton": "Marriott Bonvoy",
+  "St. Regis": "Marriott Bonvoy",
+  "Tribute Portfolio": "Marriott Bonvoy",
+  "Westin": "Marriott Bonvoy",
+
+  // Radisson Rewards
+  "Radisson Rewards": "Radisson Rewards",
+
+  // World of Hyatt
+  "Destination Hotels": "World of Hyatt",
+  "World of Hyatt": "World of Hyatt",
+
+  // Wyndham Rewards
+  "La Quinta": "Wyndham Rewards",
+  "Wyndham Rewards": "Wyndham Rewards",
+};
+
+// Updated getLoyaltyProgram function for robust matching
+function getLoyaltyProgram(brandName: string | null): string {
+  if (!brandName) return "Other";
+  const key = brandName.trim().toLowerCase();
+
+  // Build a lowercase-keyed map once (memoized using a function property)
+  // This check ensures the map is created only on the first call or if cleared.
+  if (!(getLoyaltyProgram as any)._lowercaseMap) {
+    const lowerMap: Record<string, string> = {};
+    for (const k in brandToLoyaltyMap) {
+      lowerMap[k.toLowerCase()] = brandToLoyaltyMap[k];
+    }
+    (getLoyaltyProgram as any)._lowercaseMap = lowerMap;
+  }
+  
+  const lowerMap = (getLoyaltyProgram as any)._lowercaseMap as Record<string, string>;
+  return lowerMap[key] || "Other"; // Fallback to "Other" if no specific mapping
 }
 
 /**
@@ -114,6 +192,7 @@ export const transformPelotonHotelData = (
       lng: parseFloat(rawHotel.longitude), // Convert string to number
       distance_m: rawHotel.distance, // Assuming distance is already in meters or suitable unit
       brand: rawHotel.brand_name || "", // Default to empty string if null
+      loyaltyProgram: getLoyaltyProgram(rawHotel.brand_name), // Added loyalty program
       total_bikes: rawHotel.total_bikes,
       in_gym: rawHotel.has_bikes_fitness_center === 1,
       in_room: rawHotel.has_bikes_rooms === 1,
@@ -213,7 +292,8 @@ export const fetchPelotonHotels = async (
       method: "POST",
       headers,
       body: bboxJson,
-      next: { revalidate: 3600 }, // Cache data for 1 hour, revalidate
+      // TODO: Revert caching changes - ensure this revalidate time is restored
+      next: { revalidate: 3600 }, // Restored caching to 1 hour (was 0)
     });
   } catch (networkError) {
     console.error(`[pelotonAPI] Network error fetching hotel data from ${dataUrl} for city ${city}:`, networkError);

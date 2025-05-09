@@ -67,17 +67,27 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
 
   if (!hotel) return null;
 
-  // Feature icons mapping
+  // Feature icons mapping - consistent with HotelCard and HotelResultCard
   const getFeatureIcon = (feature: string) => {
     switch (feature.toLowerCase()) {
       case 'bike weights':
-        return '⚖️';
+        return { icon: '⚖️', tooltip: 'Peloton bike includes weights' };
       case 'dual-sided spd pedals':
-        return '👟';
+        return { icon: '👟', tooltip: 'Dual-sided SPD pedals compatible with cycling shoes' };
+      case 'delta-compatible pedals':
+        return { icon: '👟', tooltip: 'Delta-compatible pedals for Peloton/other cycling shoes' };
+      case 'free weights':
+        return { icon: '🏋️', tooltip: 'Access to free weights' };
+      case 'resistance bands':
+        return { icon: '🤸', tooltip: 'Resistance bands available' };
+      case 'workout mat':
+        return { icon: '🧘', tooltip: 'Workout mat provided' };
+      case 'yoga blocks':
+        return { icon: '🧱', tooltip: 'Yoga blocks available' };
       case 'bike screen':
-        return '📱';
+        return { icon: '📱', tooltip: 'Bike includes a screen for classes' };
       default:
-        return '✓';
+        return { icon: '✓', tooltip: feature }; // Default icon and use feature name as tooltip
     }
   };
 
@@ -93,9 +103,17 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
         <div className="p-5 border-b flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 mb-1">{hotel.name}</h2>
-            {hotel.brand && (
+            {(hotel.loyaltyProgram && hotel.loyaltyProgram !== "Other") ? (
+              <Badge variant="outline" className="text-sm">
+                {hotel.loyaltyProgram}
+              </Badge>
+            ) : hotel.brand ? (
               <Badge variant="outline" className="text-sm">
                 {hotel.brand}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-sm border-dashed">
+                Independent
               </Badge>
             )}
           </div>
@@ -158,15 +176,19 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
                     Bike Features
                   </h3>
                   <div className="flex flex-wrap gap-2">
-                    {hotel.bike_features.map(feature => (
-                      <div 
-                        key={feature}
-                        className="flex items-center px-3 py-1.5 bg-gray-100 rounded-full text-sm"
-                      >
-                        <span className="mr-1.5">{getFeatureIcon(feature)}</span>
-                        {feature}
-                      </div>
-                    ))}
+                    {hotel.bike_features.map(feature => {
+                      const { icon, tooltip } = getFeatureIcon(feature); // Get icon and tooltip
+                      return (
+                        <div 
+                          key={feature}
+                          title={tooltip} // Add tooltip here
+                          className="flex items-center px-3 py-1.5 bg-gray-100 rounded-full text-sm"
+                        >
+                          <span className="mr-1.5">{icon}</span>
+                          {feature}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

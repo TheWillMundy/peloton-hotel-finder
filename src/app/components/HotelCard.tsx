@@ -41,6 +41,16 @@ const HotelCard: React.FC<HotelCardProps> = ({
         return { icon: '⚖️', tooltip: 'Peloton bike includes weights' };
       case 'dual-sided spd pedals':
         return { icon: '👟', tooltip: 'Dual-sided SPD pedals compatible with cycling shoes' };
+      case 'delta-compatible pedals':
+        return { icon: '👟', tooltip: 'Delta-compatible pedals for Peloton/other cycling shoes' };
+      case 'free weights':
+        return { icon: '🏋️', tooltip: 'Access to free weights' };
+      case 'resistance bands':
+        return { icon: '🤸', tooltip: 'Resistance bands available' };
+      case 'workout mat':
+        return { icon: '🧘', tooltip: 'Workout mat provided' };
+      case 'yoga blocks':
+        return { icon: '🧱', tooltip: 'Yoga blocks available' };
       case 'bike screen':
         return { icon: '📱', tooltip: 'Bike includes a screen for classes' };
       default:
@@ -79,12 +89,16 @@ const HotelCard: React.FC<HotelCardProps> = ({
             {hotel.name}
           </h3>
           
-          {/* Brand Badge (if available) */}
-          {hotel.brand ? (
+          {/* Loyalty Program Badge (if available) */}
+          {(hotel.loyaltyProgram && hotel.loyaltyProgram !== "Other") ? (
             <Badge variant="outline" className="mt-1 text-xs bg-gray-50">
-              {hotel.brand}
+              {hotel.loyaltyProgram}
             </Badge>
-          ) : (
+          ) : hotel.brand ? (
+             <Badge variant="outline" className="mt-1 text-xs bg-gray-50">
+              {hotel.brand} {/* Fallback to original brand if loyaltyProgram is Other or not specific */}
+            </Badge>
+          ): (
             <Badge variant="outline" className="mt-1 text-xs border-dashed border-gray-300 bg-gray-50 text-gray-500">
               Independent
             </Badge>
