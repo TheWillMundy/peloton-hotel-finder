@@ -1,16 +1,31 @@
 "use client";
 
-import { ClientHotel } from "@/lib/pelotonAPI";
-import { Phone, Globe } from 'lucide-react';
+import React from 'react';
+import { ClientHotel } from '@/lib/pelotonAPI';
 import { Badge } from '@/app/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-interface HotelResultCardProps {
+interface HotelCardProps {
   hotel: ClientHotel;
+  onHover?: (hotelId: number | null) => void;
   onClick?: (hotel: ClientHotel) => void;
+  isHovered?: boolean;
 }
 
-export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps) {
+const HotelCard: React.FC<HotelCardProps> = ({ 
+  hotel, 
+  onHover, 
+  onClick, 
+  isHovered = false 
+}) => {
+  const handleMouseEnter = () => {
+    if (onHover) onHover(hotel.id);
+  };
+
+  const handleMouseLeave = () => {
+    if (onHover) onHover(null);
+  };
+
   const handleClick = () => {
     if (onClick) onClick(hotel);
   };
@@ -31,45 +46,54 @@ export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps
 
   return (
     <div 
-      className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer"
+      className={cn(
+        "bg-white border rounded-lg p-3 shadow-sm transition-all duration-200 cursor-pointer",
+        isHovered ? "border-blue-500 shadow-md" : "border-gray-200",
+        "hover:shadow-md hover:border-blue-300"
+      )}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onClick={handleClick}
     >
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3">
         {/* Bike Count Circle - moved to left */}
-        <div className="flex-shrink-0 w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-          <span className="text-blue-700 font-semibold text-base">{hotel.total_bikes}</span>
+        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+          <span className="text-blue-700 font-semibold">{hotel.total_bikes}</span>
         </div>
         
         <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-semibold text-gray-800 mb-1.5 leading-tight">{hotel.name}</h3>
+          {/* Hotel Name */}
+          <h3 className="text-base font-semibold text-gray-800 leading-tight truncate" title={hotel.name}>
+            {hotel.name}
+          </h3>
           
           {/* Brand Badge (if available) */}
           {hotel.brand ? (
-            <Badge variant="outline" className="text-xs bg-gray-50">
+            <Badge variant="outline" className="mt-1 text-xs bg-gray-50">
               {hotel.brand}
             </Badge>
           ) : (
-            <Badge variant="outline" className="text-xs border-dashed border-gray-300 bg-gray-50 text-gray-500">
+            <Badge variant="outline" className="mt-1 text-xs border-dashed border-gray-300 bg-gray-50 text-gray-500">
               Independent
             </Badge>
           )}
         </div>
       </div>
-      
+
       {/* All indicators and features in one line */}
       <div className="flex items-center gap-3 mt-3 flex-wrap">
         {/* Location Indicators */}
-        <div className="flex items-center text-sm">
+        <div className="flex items-center text-xs">
           <div className={cn(
-            "w-2.5 h-2.5 rounded-full mr-2",
+            "w-2 h-2 rounded-full mr-1.5",
             hotel.in_gym ? "bg-green-500" : "bg-red-300"
           )}></div>
           <span>Gym</span>
         </div>
         
-        <div className="flex items-center text-sm">
+        <div className="flex items-center text-xs">
           <div className={cn(
-            "w-2.5 h-2.5 rounded-full mr-2",
+            "w-2 h-2 rounded-full mr-1.5",
             hotel.in_room ? "bg-green-500" : "bg-red-300"
           )}></div>
           <span>Room</span>
@@ -77,14 +101,14 @@ export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps
 
         {/* Feature Icons with tooltips */}
         {hotel.bike_features && hotel.bike_features.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-3">
+          <div className="flex flex-wrap gap-1.5 mt-2">
             {hotel.bike_features.map(feature => {
               const { icon, tooltip } = getFeatureIcon(feature);
               return (
                 <div 
                   key={feature}
                   title={tooltip}
-                  className="inline-flex items-center justify-center bg-gray-100 rounded-full h-6 px-2 text-sm"
+                  className="inline-flex items-center justify-center bg-gray-100 rounded-full h-5 px-2 text-xs"
                 >
                   <span className="mr-1">{icon}</span>
                   <span className="text-xs">{feature}</span>
@@ -94,35 +118,8 @@ export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps
           </div>
         )}
       </div>
-          
-      {/* Separator and contact information - moved to bottom */}
-      <div className="mt-4 pt-3 border-t border-gray-200">
-        <div className="flex flex-wrap gap-4">
-          {hotel.url && (
-            <a 
-              href={hotel.url.startsWith('http') ? hotel.url : `//${hotel.url}`}
-              target="_blank" 
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-xs text-blue-600 hover:underline flex items-center"
-            >
-              <Globe className="h-3 w-3 mr-1" />
-              Visit Website
-            </a>
-          )}
-          
-          {hotel.tel && (
-            <a 
-              href={`tel:${hotel.tel}`}
-              onClick={(e) => e.stopPropagation()}
-              className="text-xs text-blue-600 hover:underline flex items-center"
-            >
-              <Phone className="h-3 w-3 mr-1" />
-              {hotel.tel}
-            </a>
-          )}
-        </div>
-      </div>
     </div>
   );
-} 
+};
+
+export default HotelCard; 

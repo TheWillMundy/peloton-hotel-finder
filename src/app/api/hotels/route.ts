@@ -10,73 +10,68 @@ import type { ClientHotel } from "@/lib/pelotonAPI"; // Re-add ClientHotel type 
 
 // CityBbox interface and cityBboxData variable are defined and used within hotelService.ts, no longer needed here.
 
-// MVP: Hardcoded city bounding boxes
-// Later, this could come from a DB or a geocoding service for unknown cities
-// const cityBboxData: Record<string, CityBbox> = {
-//   chicago: {
-//     coords: [
-//       [41.644, -87.94],
-//       [42.023, -87.94],
-//       [42.023, -87.523],
-//       [41.644, -87.523],
-//     ],
-//     center: { lat: 41.878, lng: -87.629 },
-//   },
-//   // Add other cities here as needed, e.g., newyork, london
-//   newyork: { // Example for New York - replace with actual coordinates
-//     coords: [
-//         [40.477399, -74.25909],  // Southwest
-//         [40.917577, -74.25909],  // Northwest
-//         [40.917577, -73.700272], // Northeast
-//         [40.477399, -73.700272]  // Southeast
-//     ],
-//     center: { lat: 40.7128, lng: -74.0060 }
-//   }
-// };
+// Very basic city center/bbox data - extend this or use a geocoding service
+// Coordinates are generally [longitude, latitude]
+const cityBboxData: { [key: string]: { center: [number, number]; bbox: string } } = {
+  chicago: {
+    center: [-87.6298, 41.8781],
+    bbox: "-87.9401,41.6445,-87.5240,42.0230",
+  },
+  newyork: { // Example for New York City
+    center: [-74.0060, 40.7128],
+    bbox: "-74.2591,40.4774,-73.7004,40.9176", // Example bounding box for NYC area
+  },
+  // Add more cities here
+};
+
+// Define the expected response structure
+interface HotelsApiResponse {
+  hotels: ClientHotel[];
+  cityCenter?: [number, number]; // Optional in case city lookup fails unexpectedly, though unlikely with current structure
+}
 
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
+  const { searchParams } = new URL(request.url);
   const city = searchParams.get("city");
 
   if (!city) {
-    return NextResponse.json(
-      { error: "City query parameter is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ message: "City parameter is required" }, { status: 400 });
   }
 
-  // const normalizedCity = city.toLowerCase(); // Normalization happens in getCachedHotelsByCity
-  // const bbox = cityBboxData[normalizedCity]; // Logic moved to getCachedHotelsByCity
+  // Normalize city name for lookup in cityBboxData
+  const normalizedCity = city.toLowerCase();
+  const cityData = cityBboxData[normalizedCity];
 
-  // if (!bbox) { // Logic moved
-  //   return NextResponse.json(
-  //     { error: `Bounding box data not found for city: ${city}` },
-  //     { status: 404 }
-  //   );
-  // }
-
-  // const bboxJson = JSON.stringify(bbox); // Logic moved
+  // We need the city center regardless of cache status, so look it up first
+  const cityCenter = cityData?.center; // Get center if city is known
 
   try {
+    console.log(`[api/hotels] Getting cached hotels for city: ${city}`);
+    // getCachedHotelsByCity handles fetching, transformation, and caching internally
     const hotels: ClientHotel[] = await getCachedHotelsByCity(city);
-    return NextResponse.json(hotels);
-  } catch (error) {
-    console.error(
-      `[API /api/hotels] Error processing request for city '${city}':`,
-      error instanceof Error ? error.message : error,
-      error instanceof Error && error.stack ? `\nStack: ${error.stack}` : ""
-    );
+    console.log(`[api/hotels] Found ${hotels.length} hotels for ${city}`);
 
-    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while fetching hotel data.";
-    
-    // Check if it's the specific "Bounding box data not found" error to return 404
-    if (errorMessage.startsWith("Bounding box data not found for city")) {
-      return NextResponse.json({ error: errorMessage }, { status: 404 });
+    // Construct the response payload
+    const responsePayload: HotelsApiResponse = {
+      hotels: hotels,
+      // Include cityCenter only if the city was found in our predefined list
+      // If getCachedHotelsByCity threw an error for unknown city, this won't be reached
+      cityCenter: cityCenter 
+    };
+
+    return NextResponse.json(responsePayload);
+
+  } catch (error: any) {
+    console.error(`[api/hotels] Error processing request for city ${city}:`, error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+
+    // Check if the error came from getCachedHotelsByCity due to unknown city
+    // (Assuming getCachedHotelsByCity throws a specific error or message for this)
+    if (errorMessage.includes("No data configuration found for city") || errorMessage.includes("Bounding box data not found")) {
+        return NextResponse.json({ message: `No data configuration found for city: ${city}` }, { status: 404 });
     }
 
-    return NextResponse.json(
-      { error: "Failed to retrieve hotel data. Please try again later.", details: errorMessage }, 
-      { status: 500 }
-    );
+    // Generic server error for other issues
+    return NextResponse.json({ message: `Failed to retrieve hotel data for ${city}: ${errorMessage}` }, { status: 500 });
   }
 } 
