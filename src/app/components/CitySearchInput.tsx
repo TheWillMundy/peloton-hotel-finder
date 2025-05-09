@@ -5,9 +5,10 @@ import { useState } from 'react';
 interface CitySearchInputProps {
   onSearch: (city: string) => void;
   isLoading?: boolean;
+  className?: string;
 }
 
-export default function CitySearchInput({ onSearch, isLoading }: CitySearchInputProps) {
+export default function CitySearchInput({ onSearch, isLoading, className }: CitySearchInputProps) {
   const [city, setCity] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -18,7 +19,7 @@ export default function CitySearchInput({ onSearch, isLoading }: CitySearchInput
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-2">
+    <form onSubmit={handleSubmit} className={`flex gap-2 ${className || ''}`}>
       <input
         type="text"
         value={city}

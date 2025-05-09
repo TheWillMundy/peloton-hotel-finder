@@ -10,13 +10,17 @@ interface HotelCardProps {
   onHover?: (hotelId: number | null) => void;
   onClick?: (hotel: ClientHotel) => void;
   isHovered?: boolean;
+  isAnyHovered?: boolean;
+  isMobile?: boolean;
 }
 
 const HotelCard: React.FC<HotelCardProps> = ({ 
   hotel, 
   onHover, 
   onClick, 
-  isHovered = false 
+  isHovered = false,
+  isAnyHovered = false,
+  isMobile = false
 }) => {
   const handleMouseEnter = () => {
     if (onHover) onHover(hotel.id);
@@ -47,14 +51,22 @@ const HotelCard: React.FC<HotelCardProps> = ({
   return (
     <div 
       className={cn(
-        "bg-white border rounded-lg p-3 shadow-sm transition-all duration-200 cursor-pointer",
-        isHovered ? "border-blue-500 shadow-md" : "border-gray-200",
-        "hover:shadow-md hover:border-blue-300"
+        "bg-white border rounded-lg p-3 transition-all duration-300 cursor-pointer relative",
+        !isMobile && isHovered 
+          ? "shadow-lg bg-blue-50/50 z-10 opacity-100 scale-[1.02]"
+          : !isMobile && isAnyHovered 
+            ? "border-gray-200 hover:shadow-md hover:border-gray-300 opacity-70"
+            : "border-gray-200 hover:shadow-md hover:border-gray-300 opacity-100"
       )}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
+      data-hotel-id={hotel.id}
     >
+      {/* Blue vertical line on the right when hovered */}
+      {!isMobile && isHovered && (
+        <div className="absolute top-0 bottom-0 right-0 w-2 bg-blue-500 rounded-r-lg"></div>
+      )}
       <div className="flex items-start gap-3">
         {/* Bike Count Circle - moved to left */}
         <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">

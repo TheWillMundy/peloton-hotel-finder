@@ -14,6 +14,8 @@ interface MapboxMapProps {
   hoveredHotelId?: string | number | null;
   onMarkerClick?: (hotel: ClientHotel) => void;
   onMapLoad?: () => void; // New callback prop
+  isMobile?: boolean; // Suppress popups on mobile
+  onMarkerHover?: (hotelId: number | null) => void; // New prop for direct marker hover
 }
 
 // Inject custom popup styles (from reference project)
@@ -45,14 +47,14 @@ if (typeof window !== 'undefined' && !document.getElementById(customPopupStylesI
   document.head.appendChild(styles);
 }
 
-const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, hoveredHotelId, onMarkerClick, onMapLoad }) => {
+const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, hoveredHotelId, onMarkerClick, onMapLoad, isMobile, onMarkerHover }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const internalMapRef = useRef<mapboxgl.Map | null>(null);
-  const map = externalMapRef || internalMapRef; // Use external ref if provided
-
+  const map = externalMapRef || internalMapRef;
   const markersRef = useRef<Marker[]>([]);
   const { center, setCenter, zoom, setZoom } = useMapContext();
-  const userInitiatedMove = useRef(false); // To track if map move was by user
+  const userInitiatedMove = useRef(false);
+  const currentHoveredMarkerElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return; // Initialize map only once
@@ -147,8 +149,9 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
       if (typeof hotel.lat === 'number' && typeof hotel.lng === 'number') {
         const el = document.createElement('div');
         el.dataset.hotelId = hotel.id.toString();
-        el.style.width = "36px";
-        el.style.height = "36px";
+        // Slightly larger markers for better presence
+        el.style.width = "40px"; 
+        el.style.height = "40px";
         el.style.borderRadius = "50%";
         el.style.cursor = "pointer";
         el.style.display = "flex";
@@ -156,113 +159,115 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
         el.style.justifyContent = "center";
         el.style.color = "white";
         el.style.fontWeight = "bold";
-        el.style.fontSize = "14px";
-        el.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)"; // Add subtle shadow for depth
+        el.style.fontSize = "15px"; // Slightly larger font
+        el.style.boxShadow = "0 3px 6px rgba(0,0,0,0.15)"; // Enhanced shadow
+        el.style.border = "2px solid white"; // Base border for all markers
+        el.style.transition = "transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out"; // Smooth transition for hover
 
         // More aesthetic colors
         if (hotel.total_bikes && hotel.total_bikes > 0) {
           if (hotel.in_room) {
-            // Blue for in-room bikes (more muted tone)
-            el.style.backgroundColor = "#4A90E2"; 
+            el.style.backgroundColor = "#4A90E2"; // Blue for in-room
+            el.style.borderColor = "rgba(74, 144, 226, 0.5)"; // Border matching bg
           } else if (hotel.total_bikes >= 3) {
-            // Green for 3+ gym bikes (more muted tone)
-            el.style.backgroundColor = "#58B794"; 
+            el.style.backgroundColor = "#58B794"; // Green for 3+ gym
+            el.style.borderColor = "rgba(88, 183, 148, 0.5)"; // Border matching bg
           } else {
-            // Gold/yellow for 1-2 gym bikes
-            el.style.backgroundColor = "#F5BD41"; 
+            el.style.backgroundColor = "#F5BD41"; // Gold/yellow for 1-2 gym
+            el.style.borderColor = "rgba(245, 189, 65, 0.5)"; // Border matching bg
           }
           el.innerText = String(hotel.total_bikes);
         } else {
-          // Grey for no bikes (more muted tone)
-          el.style.backgroundColor = "#9AA1B1"; 
-          el.innerText = "P"; // Placeholder for Peloton or 0
+          el.style.backgroundColor = "#9AA1B1"; // Grey for no bikes
+          el.style.borderColor = "rgba(154, 161, 177, 0.5)"; // Border matching bg
+          el.innerText = "P"; 
         }
 
-        const marker = new mapboxgl.Marker(el)
+        // Create marker anchored at bottom center so scaling does not move its lat/lng position
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([hotel.lng, hotel.lat])
-          .addTo(currentMap!); 
-        
-        const popupContent = `
-          <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 14px; color: #333; padding: 5px;">
-            <h3 style="font-weight: bold; margin: 0 0 8px 0; font-size: 16px;">${hotel.name}</h3>
-            ${hotel.total_bikes ? `<p style="margin: 0 0 5px 0;"><strong>Bikes:</strong> ${hotel.total_bikes}</p>` : ''}
-            <p style="margin: 0 0 5px 0;">
-              ${hotel.in_gym ? '<span style="background-color: #e9f5ea; color: #58B794; padding: 2px 5px; border-radius: 4px; margin-right: 5px;">In Gym</span>' : '<span style="background-color: #f8e8e8; color: #E57373; padding: 2px 5px; border-radius: 4px; margin-right: 5px;">Not in Gym</span>'}
-              ${hotel.in_room ? '<span style="background-color: #e6f3ff; color: #4A90E2; padding: 2px 5px; border-radius: 4px;">In Room</span>' : '<span style="background-color: #f8e8e8; color: #E57373; padding: 2px 5px; border-radius: 4px;">Not in Room</span>'}
-            </p>
-            ${hotel.bike_features && hotel.bike_features.length > 0 ? `<p style="margin: 0 0 5px 0;"><strong>Features:</strong> ${hotel.bike_features.join(', ')}</p>` : ''}
-            ${hotel.url ? `<a href="${hotel.url.startsWith('http') ? hotel.url : '//' + hotel.url}" target="_blank" rel="noopener noreferrer" style="color: #4A90E2; text-decoration: none;">Visit Website</a>` : ''}
-          </div>
-        `;
+          .addTo(currentMap!);
+        // Store only original boxShadow for reset
+        el.dataset.origBoxShadow = el.style.boxShadow || '';
 
-        const popup = new mapboxgl.Popup({ 
-          offset: 25, 
-          className: 'custom-map-popup' 
-        }).setHTML(popupContent);
-        
-        marker.setPopup(popup);
+        // Direct marker hover and click listeners
+        if (!isMobile) {
+          el.addEventListener('mouseenter', () => {
+            if (onMarkerHover) onMarkerHover(hotel.id); 
+          });
 
-        marker.getElement().addEventListener('click', (e: MouseEvent) => {
-            e.stopPropagation(); 
-            if (map.current) { 
-                markersRef.current.forEach(m => {
-                    if (m !== marker && m.getPopup()?.isOpen()) {
-                        m.getPopup()!.remove();
-                    }
-                });
-                popup.addTo(map.current);
-            }
-            if (onMarkerClick) {
-                onMarkerClick(hotel);
-            }
+          el.addEventListener('mouseleave', () => {
+            if (onMarkerHover) onMarkerHover(null); 
+          });
+        }
+
+        el.addEventListener('click', (e: MouseEvent) => {
+          e.stopPropagation();
+          // Also trigger hover effect on mobile when clicking a marker
+          if (isMobile && onMarkerHover) {
+            onMarkerHover(hotel.id);
+          }
+          if (onMarkerClick) onMarkerClick(hotel); 
         });
         markersRef.current.push(marker);
       }
     });
-  }, [hotels, map, onMarkerClick]);
+  }, [hotels, map, onMarkerClick, isMobile, onMarkerHover]);
 
-  // Effect to handle hoveredHotelId (e.g., show popup or highlight marker)
+  // Effect to handle hoveredHotelId (from list or direct marker hover)
   useEffect(() => {
     const currentMap = map.current;
     if (!currentMap || !currentMap.isStyleLoaded()) {
-        if (currentMap) { // Check if map.current is available for cleanup
-             markersRef.current.forEach(m => {
-                if (m.getPopup()?.isOpen()) { // Optional chaining for getPopup()
-                    m.getPopup()?.remove();
-                }
-            });
+      return;
+    }
+
+    // Reset style for the previously hovered element (if any)
+    if (currentHoveredMarkerElementRef.current) {
+      const prevElement = currentHoveredMarkerElementRef.current;
+      prevElement.style.transform = prevElement.style.transform.replace(/scale\([^)]*\)/g, '').trim(); // Remove scale
+      prevElement.style.boxShadow = prevElement.dataset.origBoxShadow || '';
+      prevElement.style.zIndex = '1';
+      // prevElement.style.opacity = '1'; // Will be handled by the loop below if it's not the new hovered one
+      currentHoveredMarkerElementRef.current = null;
+    }
+    
+    // Apply styles based on the new hoveredHotelId
+    markersRef.current.forEach(m => {
+      const markerElement = m.getElement() as HTMLElement;
+      if (markerElement.dataset.hotelId === String(hoveredHotelId)) {
+        // This is the newly hovered marker
+        const baseTransform = markerElement.style.transform.replace(/scale\([^)]*\)/g, '').trim();
+        markerElement.style.transform = `${baseTransform} scale(1.15)`;
+        markerElement.style.boxShadow = '0 6px 15px rgba(0,0,0,0.3)';
+        markerElement.style.zIndex = '10';
+        markerElement.style.opacity = '1';
+        currentHoveredMarkerElementRef.current = markerElement;
+      } else {
+        // This is not the hovered marker
+        // Only apply opacity change on desktop
+        if (!isMobile) {
+          markerElement.style.opacity = '0.6'; // Deactivate other markers (desktop only)
+        } else {
+          markerElement.style.opacity = '1'; // Keep full opacity on mobile
         }
-        return;
-    }
-
-    if (!hoveredHotelId) {
-        markersRef.current.forEach(m => {
-            if (m.getPopup()?.isOpen()) { // Optional chaining
-                m.getPopup()?.remove();
-            }
-        });
-        return;
-    }
-
-    const currentMarker = markersRef.current.find(m => {
-      // Use dataset.hotelId for direct lookup
-      return m.getElement().dataset.hotelId === String(hoveredHotelId);
+        
+        // Ensure non-hovered markers are not scaled (redundant if prevElement logic is robust, but safe)
+        const baseTransform = markerElement.style.transform.replace(/scale\([^)]*\)/g, '').trim();
+        markerElement.style.transform = baseTransform;
+        markerElement.style.zIndex = '1';
+        markerElement.style.boxShadow = markerElement.dataset.origBoxShadow || '';
+      }
     });
 
-    if (currentMarker) {
-        // Close other popups
-        markersRef.current.forEach(m => {
-            if (m !== currentMarker && m.getPopup()?.isOpen()) { // Optional chaining
-            m.getPopup()?.remove();
-            }
-        });
-        if (!currentMarker.getPopup()?.isOpen()) { // Optional chaining
-            currentMarker.getPopup()?.addTo(currentMap);
-        }
-        currentMap.flyTo({ center: currentMarker.getLngLat(), zoom: Math.max(currentMap.getZoom(), 14) });
+    if (!hoveredHotelId && !currentHoveredMarkerElementRef.current) {
+      // Explicitly reset all opacities if nothing is hovered (e.g. mouse left list and map)
+      markersRef.current.forEach(m => {
+        const markerElement = m.getElement() as HTMLElement;
+        markerElement.style.opacity = '1';
+      });
     }
-  }, [hoveredHotelId, hotels, map, onMarkerClick]);
 
+  }, [hoveredHotelId, map, hotels, isMobile]);
 
   return <div ref={mapContainer} style={{ position: 'absolute', top: 0, bottom: 0, width: '100%', height: '100%' }} />;
 };
