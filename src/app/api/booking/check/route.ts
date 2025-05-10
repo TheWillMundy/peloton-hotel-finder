@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getCachedHotelsByCity,
+  getCachedHotelsByCriteria,
   findHotelByFuzzyMatch,
 } from "@/lib/hotelService";
 import type { ClientHotel } from "@/lib/pelotonAPI";
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const hotelsInCity: ClientHotel[] = await getCachedHotelsByCity(city);
+    const hotelsInCity: ClientHotel[] = await getCachedHotelsByCriteria(city);
 
     if (!hotelsInCity || hotelsInCity.length === 0) {
       return NextResponse.json(

@@ -16,6 +16,7 @@ interface MapboxMapProps {
   onMapLoad?: () => void; // New callback prop
   isMobile?: boolean; // Suppress popups on mobile
   onMarkerHover?: (hotelId: number | null) => void; // New prop for direct marker hover
+  mapReady?: boolean; // New prop from page.tsx
 }
 
 // Inject custom popup styles (from reference project)
@@ -47,7 +48,64 @@ if (typeof window !== 'undefined' && !document.getElementById(customPopupStylesI
   document.head.appendChild(styles);
 }
 
-const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, hoveredHotelId, onMarkerClick, onMapLoad, isMobile, onMarkerHover }) => {
+// Helper to create a styled marker element for a hotel
+function createMarkerElement(
+  hotel: ClientHotel,
+  isMobile?: boolean,
+  onMarkerHover?: (id: number | null) => void,
+  onMarkerClick?: (hotel: ClientHotel) => void
+): HTMLDivElement {
+  const el = document.createElement('div');
+  el.dataset.hotelId = hotel.id.toString();
+  el.style.width = "40px";
+  el.style.height = "40px";
+  el.style.borderRadius = "50%";
+  el.style.cursor = "pointer";
+  el.style.display = "flex";
+  el.style.alignItems = "center";
+  el.style.justifyContent = "center";
+  el.style.color = "white";
+  el.style.fontWeight = "bold";
+  el.style.fontSize = "15px";
+  el.style.boxShadow = "0 3px 6px rgba(0,0,0,0.15)";
+  el.style.border = "2px solid white";
+  el.style.transition = "transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out";
+
+  // Set background color based on bike availability
+  if (hotel.total_bikes && hotel.total_bikes > 0) {
+    if (hotel.in_room) {
+      el.style.backgroundColor = "#4A90E2";
+      el.style.borderColor = "rgba(74, 144, 226, 0.5)";
+    } else if (hotel.total_bikes >= 3) {
+      el.style.backgroundColor = "#58B794";
+      el.style.borderColor = "rgba(88, 183, 148, 0.5)";
+    } else {
+      el.style.backgroundColor = "#F5BD41";
+      el.style.borderColor = "rgba(245, 189, 65, 0.5)";
+    }
+    el.innerText = String(hotel.total_bikes);
+  } else {
+    el.style.backgroundColor = "#9AA1B1";
+    el.style.borderColor = "rgba(154, 161, 177, 0.5)";
+    el.innerText = "P";
+  }
+
+  // Attach event listeners
+  if (!isMobile) {
+    el.addEventListener('mouseenter', () => onMarkerHover && onMarkerHover(hotel.id));
+    el.addEventListener('mouseleave', () => onMarkerHover && onMarkerHover(null));
+  }
+  el.addEventListener('click', (e: MouseEvent) => {
+    e.stopPropagation();
+    if (isMobile && onMarkerHover) onMarkerHover(hotel.id);
+    if (onMarkerClick) onMarkerClick(hotel);
+  });
+
+  return el;
+}
+
+const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, hoveredHotelId, onMarkerClick, onMapLoad, isMobile, onMarkerHover, mapReady }) => {
+  // console.log('[MapboxMap component render] Hotels count:', hotels?.length, 'mapReady:', mapReady, 'isMobile:', isMobile);
   const mapContainer = useRef<HTMLDivElement>(null);
   const internalMapRef = useRef<mapboxgl.Map | null>(null);
   const map = externalMapRef || internalMapRef;
@@ -109,7 +167,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
 
   // New useEffect to react to programmatic changes of 'center' from context
   useEffect(() => {
-    if (map.current && map.current.isStyleLoaded() && center && Array.isArray(center)) {
+    if (map.current && map.current.isStyleLoaded() && mapReady && center && Array.isArray(center)) {
       // If a programmatic move just finished, userInitiatedMove might still be true from 'movestart'.
       // We want to flyTo if the context center is different AND it wasn't a direct user pan/zoom that just concluded.
       // A simple way is to check if the map is currently being dragged/panned by the user.
@@ -135,84 +193,31 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
         });
       }
     }
-  }, [center, map, zoom]); // React to center changes for flying. Zoom is handled by map init and user.
+  }, [center, map, zoom, mapReady]); // React to center changes for flying. Zoom is handled by map init and user.
 
   useEffect(() => {
     const currentMap = map.current;
-    if (!currentMap || !currentMap.isStyleLoaded()) return;
 
-    // Clear existing markers
+    if (!currentMap || !currentMap.isStyleLoaded() || !mapReady) {
+      markersRef.current.forEach(marker => marker.remove());
+      markersRef.current = [];
+      return;
+    }
+
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current = [];
 
     hotels.forEach(hotel => {
       if (typeof hotel.lat === 'number' && typeof hotel.lng === 'number') {
-        const el = document.createElement('div');
-        el.dataset.hotelId = hotel.id.toString();
-        // Slightly larger markers for better presence
-        el.style.width = "40px"; 
-        el.style.height = "40px";
-        el.style.borderRadius = "50%";
-        el.style.cursor = "pointer";
-        el.style.display = "flex";
-        el.style.alignItems = "center";
-        el.style.justifyContent = "center";
-        el.style.color = "white";
-        el.style.fontWeight = "bold";
-        el.style.fontSize = "15px"; // Slightly larger font
-        el.style.boxShadow = "0 3px 6px rgba(0,0,0,0.15)"; // Enhanced shadow
-        el.style.border = "2px solid white"; // Base border for all markers
-        el.style.transition = "transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out"; // Smooth transition for hover
-
-        // More aesthetic colors
-        if (hotel.total_bikes && hotel.total_bikes > 0) {
-          if (hotel.in_room) {
-            el.style.backgroundColor = "#4A90E2"; // Blue for in-room
-            el.style.borderColor = "rgba(74, 144, 226, 0.5)"; // Border matching bg
-          } else if (hotel.total_bikes >= 3) {
-            el.style.backgroundColor = "#58B794"; // Green for 3+ gym
-            el.style.borderColor = "rgba(88, 183, 148, 0.5)"; // Border matching bg
-          } else {
-            el.style.backgroundColor = "#F5BD41"; // Gold/yellow for 1-2 gym
-            el.style.borderColor = "rgba(245, 189, 65, 0.5)"; // Border matching bg
-          }
-          el.innerText = String(hotel.total_bikes);
-        } else {
-          el.style.backgroundColor = "#9AA1B1"; // Grey for no bikes
-          el.style.borderColor = "rgba(154, 161, 177, 0.5)"; // Border matching bg
-          el.innerText = "P"; 
-        }
-
-        // Create marker anchored at bottom center so scaling does not move its lat/lng position
+        const el = createMarkerElement(hotel, isMobile, onMarkerHover, onMarkerClick);
         const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([hotel.lng, hotel.lat])
           .addTo(currentMap!);
-        // Store only original boxShadow for reset
         el.dataset.origBoxShadow = el.style.boxShadow || '';
-
-        // Direct marker hover and click listeners
-        if (!isMobile) {
-          el.addEventListener('mouseenter', () => {
-            if (onMarkerHover) onMarkerHover(hotel.id); 
-          });
-
-          el.addEventListener('mouseleave', () => {
-            if (onMarkerHover) onMarkerHover(null); 
-          });
-        }
-
-        el.addEventListener('click', (e: MouseEvent) => {
-          e.stopPropagation();
-          // Also trigger hover effect on mobile when clicking a marker
-          if (isMobile && onMarkerHover) {
-            onMarkerHover(hotel.id);
-          }
-          if (onMarkerClick) onMarkerClick(hotel); 
-        });
         markersRef.current.push(marker);
       }
     });
-  }, [hotels, map, onMarkerClick, isMobile, onMarkerHover]);
+  }, [hotels, onMarkerClick, isMobile, onMarkerHover, mapReady]);
 
   // Effect to handle hoveredHotelId (from list or direct marker hover)
   useEffect(() => {

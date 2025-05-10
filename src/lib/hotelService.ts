@@ -2,91 +2,78 @@ import {
   fetchPelotonHotels,
   transformPelotonHotelData,
   type ClientHotel,
+  type RawPelotonHotel,
 } from "./pelotonAPI";
 import { unstable_cache as nextCache } from "next/cache";
 import Fuse, { type IFuseOptions } from "fuse.js";
 
-interface CityBbox {
-  coords: [[number, number], [number, number], [number, number], [number, number]];
-  center: { lat: number; lng: number };
-}
+// interface CityBbox { // Now unused
+//   coords: [[number, number], [number, number], [number, number], [number, number]];
+//   center: { lat: number; lng: number };
+// }
 
 // MVP: Hardcoded city bounding boxes
-const cityBboxData: Record<string, CityBbox> = {
-  chicago: {
-    coords: [
-      [41.644, -87.94],
-      [42.023, -87.94],
-      [42.023, -87.523],
-      [41.644, -87.523],
-    ],
-    center: { lat: 41.878, lng: -87.629 },
-  },
-  newyork: {
-    coords: [
-      [40.477399, -74.25909],
-      [40.917577, -74.25909],
-      [40.917577, -73.700272],
-      [40.477399, -73.700272],
-    ],
-    center: { lat: 40.7128, lng: -74.006 },
-  },
-  // Add other cities as needed
-};
+// const cityBboxData: Record<string, CityBbox> = { // Now unused
+//   chicago: {
+//     coords: [
+//       [41.644, -87.94],
+//       [42.023, -87.94],
+//       [42.023, -87.523],
+//       [41.644, -87.523],
+//     ],
+//     center: { lat: 41.878, lng: -87.629 },
+//   },
+//   newyork: {
+//     coords: [
+//       [40.477399, -74.25909],
+//       [40.917577, -74.25909],
+//       [40.917577, -73.700272],
+//       [40.477399, -73.700272],
+//     ],
+//     center: { lat: 40.7128, lng: -74.006 },
+//   },
+//   // Add other cities as needed
+// };
 
-const getAndTransformHotelsForCity = async (
-  cityKey: string,
-  currentBboxJson: string
-): Promise<ClientHotel[]> => {
-  // It's important that fetchPelotonHotels itself is not double-caching if unstable_cache handles it.
-  // The `next: { revalidate: 3600 }` in fetchPelotonHotels might be redundant if this layer caches.
-  // However, for direct calls to fetchPelotonHotels (if any), that revalidation could still be useful.
-  // For now, let's assume unstable_cache is the primary caching mechanism for this service.
-  const rawHotels = await fetchPelotonHotels({
-    city: cityKey,
-    bboxJson: currentBboxJson,
+// Helper function to get and transform hotel data, with caching
+// Renamed from getAndTransformHotelsByCity and adapted parameters
+const getAndTransformHotels = async (bboxJson: string, searchTermForPelotonCsrf: string): Promise<ClientHotel[]> => {
+  // Fetch raw data using the new parameter name
+  const rawHotels: RawPelotonHotel[] = await fetchPelotonHotels({ 
+    bboxJson, 
+    searchTermForPelotonCsrf 
   });
   return transformPelotonHotelData(rawHotels);
 };
 
 /**
- * Fetches and caches hotel data for a given city.
+ * Retrieves cached hotel data for a given bounding box and search term (for CSRF).
  * Uses Next.js unstable_cache for server-side caching.
- * @param city The city name (will be normalized to lowercase).
- * @returns A promise that resolves to an array of ClientHotel objects.
- * @throws Error if city is not supported or if data fetching/transformation fails.
+ * Renamed from getCachedHotelsByCity
  */
-export const getCachedHotelsByCity = async (
-  city: string
-): Promise<ClientHotel[]> => {
-  const normalizedCity = city.toLowerCase();
-  const bbox = cityBboxData[normalizedCity];
+export const getCachedHotelsByCriteria = async (
+  bboxJson: string, // This will be the primary part of the cache key
+  searchTermForPelotonCsrf: string, // Used for fetching, not directly in cache key here to avoid fragmentation if only bbox matters for data
+  centerLat: number, // For the cityCenter in response
+  centerLng: number  // For the cityCenter in response
+): Promise<{ hotels: ClientHotel[]; cityCenter: [number, number] }> => {
+  console.log(`[hotelService] Getting hotels for bboxJson (cache key): ${bboxJson}, searchTermForCsrf: ${searchTermForPelotonCsrf}`);
 
-  if (!bbox) {
-    // This error will be caught by the route handler
-    throw new Error(`Bounding box data not found for city: ${city}`);
-  }
-  const bboxJson = JSON.stringify(bbox);
-
-  // TODO: Revert caching changes - Temporarily bypassing unstable_cache for debugging
-  // console.log(`[hotelService] Caching TEMPORARILY BYPASSED for ${normalizedCity}. Fetching fresh data.`);
-  // return getAndTransformHotelsForCity(normalizedCity, bboxJson);
-
-  // Use unstable_cache to cache the transformed hotel data for the city.
-  const cachedFetcher = nextCache(
-    async (currentCity: string, currentBboxJson: string) => {
-      // console.log(`[hotelService] Cache miss for ${currentCity}. Fetching fresh data.`); // Log can be noisy, optionally re-enable for debug
-      return getAndTransformHotelsForCity(currentCity, currentBboxJson);
-    },
-    [`peloton-hotels-${normalizedCity}`], // Cache key specific to the city
+  // The cache key is now based on the bboxJson to ensure that identical geographical queries are cached together.
+  // searchTermForPelotonCsrf is used in the underlying fetch but not part of this primary cache key
+  // to prevent cache misses if only the search term text changes slightly but the geo area is the same.
+  const getFreshData = () => getAndTransformHotels(bboxJson, searchTermForPelotonCsrf);
+  
+  const cachedHotels = await nextCache(
+    getFreshData,
+    [`peloton-hotels-${bboxJson}`], // Cache key based on bboxJson
     {
-      revalidate: 3600, // Restored caching to 1 hour (was false, previously 0 for bypass)
-      tags: [`peloton-city-${normalizedCity}`], // For on-demand revalidation by tag
+      revalidate: 3600, // 1 hour
+      tags: [`peloton-hotels-data`, `peloton-hotels-bbox-${bboxJson}`], // Added specific bbox tag
     }
-  );
-  // The parameters passed here (normalizedCity, bboxJson) are for the first call if not cached.
-  // The inner function of nextCache receives these parameters.
-  return cachedFetcher(normalizedCity, bboxJson);
+  )();
+
+  return { hotels: cachedHotels, cityCenter: [centerLat, centerLng] };
 };
 
 // --- Booking Checker Utilities ---

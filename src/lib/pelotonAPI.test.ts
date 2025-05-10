@@ -82,6 +82,7 @@ describe('Peloton API Utilities', () => {
       lng: -87.6311861,
       distance_m: 229.29,
       brand: "Club Quarters",
+      loyaltyProgram: "Other",
       total_bikes: 1,
       in_gym: true,
       in_room: false,
@@ -111,10 +112,23 @@ describe('Peloton API Utilities', () => {
       };
       const transformed = transformPelotonHotelData([partialRawHotel]);
       expect(transformed[0].brand).toBe('');
+      expect(transformed[0].loyaltyProgram).toBe('Other');
       expect(transformed[0].tel).toBeNull();
       expect(transformed[0].url).toBeNull();
       expect(transformed[0].bike_features).toEqual([]);
       expect(transformed[0].distance_m).toBeNull();
+    });
+
+    it('should correctly map a known brand to its loyalty program', () => {
+      const rawHotelWithKnownBrand: RawPelotonHotel = {
+        ...mockRawHotel,
+        id: 182,
+        name: "Hilton Test Hotel",
+        brand_name: "Hilton",
+      };
+      const transformed = transformPelotonHotelData([rawHotelWithKnownBrand]);
+      expect(transformed[0].brand).toBe('Hilton');
+      expect(transformed[0].loyaltyProgram).toBe('Hilton Honors');
     });
 
     it('should correctly set in_gym and in_room based on 0/1 values', () => {
@@ -168,22 +182,22 @@ describe('Peloton API Utilities', () => {
     const sampleHotels: ClientHotel[] = [
       {
         id: 1, place_id: 'a', name: 'The Grand Hotel', lat: 0, lng: 0, distance_m: 100,
-        brand: 'Hyatt', total_bikes: 2, in_gym: true, in_room: false,
+        brand: 'Hyatt', loyaltyProgram: 'World of Hyatt', total_bikes: 2, in_gym: true, in_room: false,
         bike_features: ['Bike weights'], url: '', tel: '',
       },
       {
         id: 2, place_id: 'b', name: 'Hotel Deluxe Inn', lat: 1, lng: 1, distance_m: 200,
-        brand: 'Marriott', total_bikes: 1, in_gym: true, in_room: false,
+        brand: 'Marriott', loyaltyProgram: 'Marriott Bonvoy', total_bikes: 1, in_gym: true, in_room: false,
         bike_features: [], url: '', tel: '',
       },
       {
         id: 3, place_id: 'c', name: 'Park Plaza Hotel', lat: 2, lng: 2, distance_m: 300,
-        brand: 'Hilton', total_bikes: 0, in_gym: false, in_room: false,
+        brand: 'Hilton', loyaltyProgram: 'Hilton Honors', total_bikes: 0, in_gym: false, in_room: false,
         bike_features: [], url: '', tel: '',
       },
       {
         id: 4, place_id: 'd', name: 'Grand Hyatt', lat: 3, lng: 3, distance_m: 50,
-        brand: 'Hyatt', total_bikes: 3, in_gym: true, in_room: true,
+        brand: 'Hyatt', loyaltyProgram: 'World of Hyatt', total_bikes: 3, in_gym: true, in_room: true,
         bike_features: ['Bike weights', 'Dual-sided SPD pedals'], url: '', tel: '',
       },
     ];

@@ -17,7 +17,7 @@ export const extractCSRFToken = (html: string): string | null => {
 };
 
 interface FetchHotelsParams {
-  city: string;
+  searchTermForPelotonCsrf: string; // Renamed from city
   bboxJson: string; // The BBOX JSON string
   userAgent?: string;
   // We'll manage cookies automatically with Next.js fetch cache and `headers`
@@ -143,23 +143,18 @@ const brandToLoyaltyMap: { [key: string]: string } = {
   "Wyndham Rewards": "Wyndham Rewards",
 };
 
-// Updated getLoyaltyProgram function for robust matching
-function getLoyaltyProgram(brandName: string | null): string {
+// Create a lowercase-keyed map once for getLoyaltyProgram
+const lowercaseBrandToLoyaltyMap: Record<string, string> = Object.fromEntries(
+  Object.entries(brandToLoyaltyMap).map(([key, value]) => [key.toLowerCase(), value])
+);
+
+/**
+ * Returns normalized loyalty program for a given brand name, or 'Other' if unmapped.
+ */
+export function getLoyaltyProgram(brandName: string | null): string {
   if (!brandName) return "Other";
   const key = brandName.trim().toLowerCase();
-
-  // Build a lowercase-keyed map once (memoized using a function property)
-  // This check ensures the map is created only on the first call or if cleared.
-  if (!(getLoyaltyProgram as any)._lowercaseMap) {
-    const lowerMap: Record<string, string> = {};
-    for (const k in brandToLoyaltyMap) {
-      lowerMap[k.toLowerCase()] = brandToLoyaltyMap[k];
-    }
-    (getLoyaltyProgram as any)._lowercaseMap = lowerMap;
-  }
-  
-  const lowerMap = (getLoyaltyProgram as any)._lowercaseMap as Record<string, string>;
-  return lowerMap[key] || "Other"; // Fallback to "Other" if no specific mapping
+  return lowercaseBrandToLoyaltyMap[key] || "Other";
 }
 
 /**
@@ -214,8 +209,8 @@ export const transformPelotonHotelData = (
 export const fetchPelotonHotels = async (
   params: FetchHotelsParams
 ): Promise<RawPelotonHotel[]> => {
-  const { city, bboxJson, userAgent = DEFAULT_USER_AGENT } = params;
-  const searchUrl = `${BASE_URL}${SEARCH_ENDPOINT}?q=${encodeURIComponent(city)}`;
+  const { searchTermForPelotonCsrf, bboxJson, userAgent = DEFAULT_USER_AGENT } = params; // Destructure new param
+  const searchUrl = `${BASE_URL}${SEARCH_ENDPOINT}?q=${encodeURIComponent(searchTermForPelotonCsrf)}`; // Use new param
   let cookiesForNextRequest: string | undefined = undefined;
 
   // 1. GET search page for CSRF token and cookies
@@ -230,7 +225,7 @@ export const fetchPelotonHotels = async (
     });
   } catch (networkError) {
     console.error(`[pelotonAPI] Network error fetching search page ${searchUrl}:`, networkError);
-    throw new Error(`Network error while fetching Peloton search page for city ${city}.`);
+    throw new Error(`Network error while fetching Peloton search page for term ${searchTermForPelotonCsrf}.`);
   }
 
   if (!searchResponse.ok) {
@@ -239,7 +234,7 @@ export const fetchPelotonHotels = async (
       `[pelotonAPI] Failed to fetch search page ${searchUrl}. Status: ${searchResponse.status}. Body: ${errorBody}`
     );
     throw new Error(
-      `Peloton API returned an error for search page (city: ${city}). Status: ${searchResponse.status}`
+      `Peloton API returned an error for search page (term: ${searchTermForPelotonCsrf}). Status: ${searchResponse.status}`
     );
   }
 
@@ -266,7 +261,7 @@ export const fetchPelotonHotels = async (
 
   if (!csrfToken) {
     console.error(`[pelotonAPI] Could not locate CSRF token on the search page for ${searchUrl}`);
-    throw new Error(`Could not locate CSRF token on Peloton search page for city ${city}.`);
+    throw new Error(`Could not locate CSRF token on Peloton search page for term ${searchTermForPelotonCsrf}.`);
   }
 
   // 2. POST to hotel-map-data
@@ -296,25 +291,25 @@ export const fetchPelotonHotels = async (
       next: { revalidate: 3600 }, // Restored caching to 1 hour (was 0)
     });
   } catch (networkError) {
-    console.error(`[pelotonAPI] Network error fetching hotel data from ${dataUrl} for city ${city}:`, networkError);
-    throw new Error(`Network error while fetching Peloton hotel data for city ${city}.`);
+    console.error(`[pelotonAPI] Network error fetching hotel data from ${dataUrl} for term ${searchTermForPelotonCsrf}:`, networkError);
+    throw new Error(`Network error while fetching Peloton hotel data for term ${searchTermForPelotonCsrf}.`);
   }
 
   if (!dataResponse.ok) {
     const errorBody = await dataResponse.text().catch(() => "Could not read error body");
     console.error(
-      `[pelotonAPI] Failed to fetch hotel data from ${dataUrl} for city ${city}. Status: ${dataResponse.status}. Body: ${errorBody}`
+      `[pelotonAPI] Failed to fetch hotel data from ${dataUrl} for term ${searchTermForPelotonCsrf}. Status: ${dataResponse.status}. Body: ${errorBody}`
     );
     throw new Error(
-      `Peloton API returned an error for hotel data (city: ${city}). Status: ${dataResponse.status}`
+      `Peloton API returned an error for hotel data (term: ${searchTermForPelotonCsrf}). Status: ${dataResponse.status}`
     );
   }
 
   try {
     return dataResponse.json() as Promise<RawPelotonHotel[]>;
   } catch (jsonError) {
-    console.error(`[pelotonAPI] Failed to parse JSON response from ${dataUrl} for city ${city}:`, jsonError);
-    throw new Error(`Failed to parse JSON response from Peloton API for city ${city}.`);
+    console.error(`[pelotonAPI] Failed to parse JSON response from ${dataUrl} for term ${searchTermForPelotonCsrf}:`, jsonError);
+    throw new Error(`Failed to parse JSON response from Peloton API for term ${searchTermForPelotonCsrf}.`);
   }
 };
 
@@ -332,7 +327,7 @@ async function testFetch() {
       center: { lat: 41.878, lng: -87.629 },
     });
 
-    const hotels = await fetchPelotonHotels({ city: "chicago", bboxJson: chicagoBbox });
+    const hotels = await fetchPelotonHotels({ searchTermForPelotonCsrf: "chicago", bboxJson: chicagoBbox });
     console.log(JSON.stringify(hotels, null, 2));
   } catch (error) {
     console.error("Test fetch failed:", error);

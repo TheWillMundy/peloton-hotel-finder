@@ -6,7 +6,7 @@ import { Button } from '@/app/components/ui/button';
 import { cn } from '@/lib/utils';
 import MapboxMap from '@/app/components/MapboxMap';
 import { MapProvider, useMapContext } from '@/app/contexts/MapContext';
-import CitySearchInput from '@/app/components/CitySearchInput';
+import type { MapboxGeocodingFeature } from '@/app/components/CitySearchInput';
 import type { Map as MapboxMapType } from 'mapbox-gl';
 import { useQuery } from '@tanstack/react-query';
 import HotelCard from '@/app/components/HotelCard';
@@ -17,6 +17,13 @@ import { ViewModeProvider, useViewMode } from '@/app/contexts/ViewModeContext';
 import HotelDetailModal from '@/app/components/HotelDetailModal';
 import BottomSheet, { BottomSheetState } from '@/app/components/BottomSheet';
 import { FilterChips, Filters } from '@/app/components/FilterChips';
+import dynamic from 'next/dynamic';
+
+// Dynamically import MapboxSearchInput with SSR turned off
+const DynamicMapboxSearchInput = dynamic(
+  () => import('@/app/components/CitySearchInput'),
+  { ssr: false, loading: () => <p className="p-3 rounded-xl shadow-xl w-full bg-gray-200 animate-pulse">Loading Search...</p> } // Optional loading component
+);
 
 // Define primary loyalty programs, could also be imported from FilterChips if kept there
 const PRIMARY_LOYALTY_PROGRAMS = [
@@ -85,7 +92,7 @@ function HotelSearchPageContent() {
   const [hotels, setHotels] = useState<ClientHotel[]>([]);
   const [hoveredHotelId, setHoveredHotelId] = useState<number | null>(null);
   const [isHoverFromMap, setIsHoverFromMap] = useState(false); // Track if hover is from map
-  const [currentCity, setCurrentCity] = useState<string>("");
+  const [selectedLocation, setSelectedLocation] = useState<MapboxGeocodingFeature | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [initialPaddingSet, setInitialPaddingSet] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState<ClientHotel | null>(null);
@@ -117,37 +124,48 @@ function HotelSearchPageContent() {
   // Define the expected API response structure on the client
   interface HotelsApiResponse {
     hotels: ClientHotel[];
-    cityCenter?: [number, number]; // Lng, Lat
+    cityCenter?: [number, number]; // Lng, Lat from API response
   }
 
   // Actual TanStack Query for fetching hotels
   const { 
-    data: apiResponse, // Rename data to apiResponse for clarity
+    data: apiResponse, 
     isLoading: isLoadingHotels, 
     isError: isFetchError, 
     error: fetchError,
-    isSuccess: isFetchSuccess 
-  } = useQuery<HotelsApiResponse, Error>({ // Update expected data type
-    queryKey: ['hotels', currentCity],
+    isSuccess: isFetchSuccess,
+  } = useQuery<HotelsApiResponse, Error>({ 
+    queryKey: ['hotels', selectedLocation?.lat, selectedLocation?.lng, selectedLocation?.placeName, JSON.stringify(selectedLocation?.mapboxBbox)],
     queryFn: async () => {
-      if (!currentCity) return { hotels: [], cityCenter: undefined }; // Return default structure if no city
-      const response = await fetch(`/api/hotels?city=${encodeURIComponent(currentCity)}`);
+      if (!selectedLocation) return { hotels: [], cityCenter: undefined };
+      
+      const { lat, lng, placeName, mapboxBbox, featureType } = selectedLocation;
+      let apiUrl = `/api/hotels?lat=${lat}&lng=${lng}&searchTerm=${encodeURIComponent(placeName)}`;
+      if (mapboxBbox) {
+        apiUrl += `&mapboxBbox=${encodeURIComponent(JSON.stringify(mapboxBbox))}`;
+      }
+      if (featureType) {
+        apiUrl += `&featureType=${encodeURIComponent(featureType)}`;
+      }
+
+      const response = await fetch(apiUrl);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: "Unknown error fetching hotels" }));
         throw new Error(errorData.message || `Error: ${response.status}`);
       }
-      const data: HotelsApiResponse = await response.json(); // Expect the new structure
+      const data: HotelsApiResponse = await response.json(); 
       return data;
     },
-    enabled: !!currentCity, 
+    enabled: !!selectedLocation, // Only run query if a location is selected
     retry: 1,
   });
 
   useEffect(() => {
     if (isFetchSuccess && apiResponse) {
-      setHotels(apiResponse.hotels || []); // Set raw hotels from the response object
+      // console.log('[page.tsx useQuery success] API Response Hotels:', apiResponse.hotels?.length);
+      setHotels(apiResponse.hotels || []); 
       if (apiResponse.cityCenter) {
-        setCenter(apiResponse.cityCenter); 
+        setCenter(apiResponse.cityCenter); // API returns [lng, lat] for cityCenter
       }
     } else if (isFetchError && fetchError) {
       console.error("Failed to fetch hotels:", fetchError.message);
@@ -192,6 +210,7 @@ function HotelSearchPageContent() {
   }, [hotels]);
 
   const displayedHotels = useMemo(() => {
+    // console.log('[page.tsx useMemo displayedHotels] Input hotels:', hotels?.length);
     let filtered = [...hotels];
 
     // Apply loyalty program filters
@@ -291,8 +310,8 @@ function HotelSearchPageContent() {
     if (mapRef.current && mapReady && !initialPaddingSet) {
       let PADDING_BOTTOM = 0;
       if (isMobile) {
-        // Initial peek height for bottom sheet if panel is open
-        if (isPanelOpen) {
+        // RE-ENABLE full logic for initial mobile padding
+        if (isPanelOpen) { 
           const peekVh = 25; // Corresponds to PEEK_HEIGHT_VH in BottomSheet
           PADDING_BOTTOM = (peekVh * window.innerHeight) / 100;
           setCurrentBottomSheetState('peek');
@@ -301,20 +320,17 @@ function HotelSearchPageContent() {
         }
       }
 
-      mapRef.current.easeTo({
-          padding: {
-            left: !isMobile && isPanelOpen ? DESKTOP_SIDEBAR_WIDTH : 0,
-            right: 0, 
-            top: isMobile ? MOBILE_SEARCH_BAR_HEIGHT : 0, // Add top padding for mobile search bar
-            bottom: PADDING_BOTTOM 
-          },
-          duration: 0
-      });
+      const basePadding = {
+        left: !isMobile && isPanelOpen ? DESKTOP_SIDEBAR_WIDTH : 0,
+        right: 0,
+        top: isMobile ? MOBILE_SEARCH_BAR_HEIGHT : 0
+      };
+      mapRef.current.easeTo({ padding: { ...basePadding, bottom: PADDING_BOTTOM }, duration: 0 });
       setInitialPaddingSet(true);
       // Resize after initial padding
       setTimeout(() => mapRef.current?.resize(), 50); 
     }
-  }, [mapReady, isPanelOpen, initialPaddingSet, isMobile]);
+  }, [mapReady, isPanelOpen, initialPaddingSet, isMobile, setCurrentBottomSheetState]);
 
   // Effect to resize map when isMobile changes (layout switch)
   useEffect(() => {
@@ -331,19 +347,12 @@ function HotelSearchPageContent() {
     if (isMobile) {
       const newState = newIsOpen ? 'peek' : 'closed';
       setCurrentBottomSheetState(newState);
-      // Map resize will be handled by onBottomSheetStateChange via its height update
     } else {
       // Desktop sidebar padding update
       if (mapRef.current && mapReady) {
         const targetPaddingLeft = newIsOpen ? DESKTOP_SIDEBAR_WIDTH : 0;
-        mapRef.current.easeTo({
-          padding: { 
-            left: targetPaddingLeft, 
-            right: 0, top: 0, bottom: 0 
-          },
-          duration: 500, 
-          easing: cubicBezier(0.4, 0, 0.2, 1),
-        });
+        const basePadding = { left: targetPaddingLeft, right: 0, top: 0 };
+        mapRef.current.easeTo({ padding: { ...basePadding, bottom: 0 }, duration: 500, easing: cubicBezier(0.4, 0, 0.2, 1) });
         // Resize after desktop sidebar animation
         setTimeout(() => mapRef.current?.resize(), 550); // Slightly after animation duration
       }
@@ -352,19 +361,11 @@ function HotelSearchPageContent() {
 
   const handleBottomSheetStateChange = useCallback((newState: BottomSheetState, heightPx: number) => {
     setCurrentBottomSheetState(newState);
+
     if (mapRef.current && mapReady && isMobile) {
-      mapRef.current.easeTo({
-        padding: { 
-          left: 0, 
-          right: 0, 
-          top: MOBILE_SEARCH_BAR_HEIGHT, 
-          bottom: heightPx 
-        },
-        duration: 300, 
-        easing: cubicBezier(0.4, 0, 0.2, 1),
-      });
-      // Resize after bottom sheet animation/padding change
-      setTimeout(() => mapRef.current?.resize(), 350); // Slightly after animation duration
+      const basePadding = { left: 0, right: 0, top: MOBILE_SEARCH_BAR_HEIGHT };
+      mapRef.current.easeTo({ padding: { ...basePadding, bottom: heightPx }, duration: 300, easing: cubicBezier(0.4, 0, 0.2, 1) });
+      setTimeout(() => mapRef.current?.resize(), 350); 
     }
     // If sheet is closed by dragging, update isPanelOpen
     if (newState === 'closed' && isPanelOpen) {
@@ -410,17 +411,25 @@ function HotelSearchPageContent() {
       // If switching to map view on mobile, and panel is closed, open to peek.
       setIsPanelOpen(true); 
       setCurrentBottomSheetState('peek');
-      // The effect in BottomSheet or onBottomSheetStateChange should handle height update for map.
     }
   };
 
   const initialSheetStateForMobile = isPanelOpen ? 'peek' : 'closed';
 
-  const handleSearch = (city: string) => {
-    setCurrentCity(city);
-    setHotels([]); 
-    setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] }); 
-    setShowFilters(false); // Hide filters on new search for cleaner UI
+  // This function is called when MapboxSearchInput successfully retrieves a location
+  const handleLocationRetrieved = (feature: MapboxGeocodingFeature) => {
+    // console.log("Location retrieved:", feature);
+    setSelectedLocation(feature);
+    setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] });
+    setShowFilters(false); // Hide filters on new search
+  };
+
+  const handleNoResultsFound = () => {
+    // TODO: Implement UI feedback for no results from geocoding
+    console.warn("No geocoding results found from MapboxSearchInput.");
+    // Optionally clear hotels or show a message
+    // setHotels([]);
+    // toast({ title: "Search", description: "No locations found for your query.", variant: "default" });
   };
 
   const listViewContent = (
@@ -437,10 +446,12 @@ function HotelSearchPageContent() {
       {isMobile && (
         <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 pointer-events-none">
           <div className="w-full max-w-md pointer-events-auto">
-            <CitySearchInput 
-                onSearch={handleSearch} 
-                isLoading={isLoadingHotels}
-                className="bg-white p-3 rounded-xl shadow-xl" // Added bg-white, padding, and more pronounced rounded corners
+            <DynamicMapboxSearchInput
+              onLocationRetrieved={handleLocationRetrieved}
+              onNoResultsFound={handleNoResultsFound}
+              isLoading={isLoadingHotels} 
+              className="bg-white p-3 rounded-xl shadow-xl w-full"
+              initialValue={selectedLocation?.placeName || ''}
             />
           </div>
         </div>
@@ -464,9 +475,12 @@ function HotelSearchPageContent() {
             "p-6 flex items-center space-x-2",
             viewMode === 'map' && isPanelOpen && 'pr-14' 
           )}>
-            <CitySearchInput 
-                onSearch={handleSearch} 
-                isLoading={isLoadingHotels}
+            <DynamicMapboxSearchInput
+              onLocationRetrieved={handleLocationRetrieved}
+              onNoResultsFound={handleNoResultsFound}
+              isLoading={isLoadingHotels} 
+              className="w-full" 
+              initialValue={selectedLocation?.placeName || ''}
             />
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-2">
@@ -535,6 +549,7 @@ function HotelSearchPageContent() {
           onMapLoad={handleMapLoad}
           isMobile={isMobile}
           onMarkerHover={handleMapMarkerHover}
+          mapReady={mapReady}
         />
       </div>
 
@@ -565,7 +580,13 @@ function HotelSearchPageContent() {
             isMobile ? "fixed w-full top-0 left-0 right-0 shadow-md" : ""
           )}>
              <div className="flex items-center justify-between">
-                <CitySearchInput onSearch={handleSearch} isLoading={isLoadingHotels} />
+                <DynamicMapboxSearchInput
+                  onLocationRetrieved={handleLocationRetrieved}
+                  onNoResultsFound={handleNoResultsFound}
+                  isLoading={isLoadingHotels} 
+                  className="flex-grow" 
+                  initialValue={selectedLocation?.placeName || ''}
+                />
                  <Button variant="ghost" size="icon" onClick={() => setShowFilters(!showFilters)} className="ml-2">
                   <FilterIcon className="h-5 w-5" />
                 </Button>
