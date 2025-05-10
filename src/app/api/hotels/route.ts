@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 //   ClientHotel,
 // } from "../../lib/pelotonAPI"; // Corrected to relative path
 // import { unstable_cache as nextCache } from "next/cache"; // For server-side data caching
-import { getCachedHotelsByCriteria, findHotelByFuzzyMatch } from "@/lib/hotelService"; // Corrected import
+import { getCachedHotelsByCriteria, findHotelByFuzzyMatch } from "@/lib/hotelService"; // Corrected import - REMOVED calculateDistance, generateWideBbox, generateNarrowBbox
 import type { ClientHotel } from "@/lib/pelotonAPI"; // Re-add ClientHotel type import
 
 // Very basic city center/bbox data - extend this or use a geocoding service
@@ -22,136 +22,90 @@ import type { ClientHotel } from "@/lib/pelotonAPI"; // Re-add ClientHotel type 
 //   // Add more cities here
 // };
 
-// Define the expected response structure from the service (and for this API)
+// Define the expected response structure
 interface HotelsApiResponse {
   hotels: ClientHotel[];
   cityCenter: [number, number]; // Service now guarantees this. Lng, Lat order for response consistency.
   matchedHotel?: ClientHotel | null;    // Fuzzy matched hotel when freeText provided
   matchConfidence?: number | null;      // Confidence score for the match
+  cityBbox?: string;                    // The bounding box used/generated for this search
 }
 
-// Helper to create a default Peloton BBox JSON string from lat/lng
-const createDefaultPelotonBbox = (lat: number, lng: number, delta: number = 0.1): string => {
-  const minLat = lat - delta;
-  const maxLat = lat + delta;
-  const minLng = lng - delta;
-  const maxLng = lng + delta;
-  return JSON.stringify({
-    coords: [
-      [minLat, minLng],
-      [maxLat, minLng],
-      [maxLat, maxLng],
-      [minLat, maxLng],
-    ],
-    center: { lat, lng },
-  });
-};
+// Define error response type separately
+interface ErrorResponse {
+  error: string;
+}
 
-// Helper to create Peloton BBox JSON string from Mapbox Bbox [minLng, minLat, maxLng, maxLat]
-const createPelotonBboxFromMapbox = (mapboxBboxArray: [number, number, number, number], lat: number, lng: number): string => {
-  const [minLng, minLat, maxLng, maxLat] = mapboxBboxArray;
-  return JSON.stringify({
-    coords: [
-      [minLat, minLng],
-      [maxLat, minLng],
-      [maxLat, maxLng],
-      [minLat, maxLng],
-    ],
-    center: { lat, lng }, // Use the precise center from Mapbox feature
-  });
-};
+// /**
+//  * Generate a cache key based on search intent
+//  * This helps us identify the search purpose for analytics and cache optimization
+//  */
+// const getSearchPurpose = (featureType: string | null, freeText: string | null): 'city' | 'hotel' | 'poi' => {
+//   if (freeText) return 'hotel';
+//   if (featureType === 'poi') return 'poi';
+//   return 'city';
+// };
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-
-  const latStr = searchParams.get("lat");
-  const lngStr = searchParams.get("lng");
-  const mapboxBboxStr = searchParams.get("mapboxBbox"); // Optional: "[minLng,minLat,maxLng,maxLat]"
-  const searchTerm = searchParams.get("searchTerm");
-  const freeText = searchParams.get("freeText"); // Optional hotel name for fuzzy match
-  // const featureType = searchParams.get("featureType"); // Not directly used yet, but good for future logic
-
-  if (!latStr || !lngStr || !searchTerm) {
-    return NextResponse.json(
-      { error: "Missing required parameters: lat, lng, and searchTerm are required." },
-      { status: 400 }
-    );
-  }
-
-  const lat = parseFloat(latStr);
-  const lng = parseFloat(lngStr);
-
+export async function GET(request: NextRequest): Promise<NextResponse<HotelsApiResponse | ErrorResponse>> {
+  const searchParams = request.nextUrl.searchParams;
+  
+  // Parse required coordinates
+  const lat = parseFloat(searchParams.get("lat") || "");
+  const lng = parseFloat(searchParams.get("lng") || "");
+  
+  // Parse optional parameters
+  const searchTerm = searchParams.get("searchTerm") || "";
+  const featureType = searchParams.get("featureType") || "place"; // Default to 'place' type
+  const freeText = searchParams.get("freeText") || null;
+  const cityBbox = searchParams.get("cityBbox") || null;
+  
+  // Validate required parameters
   if (isNaN(lat) || isNaN(lng)) {
     return NextResponse.json(
-      { error: "Invalid latitude or longitude values." },
+      { error: "Missing or invalid lat/lng parameters" },
       { status: 400 }
     );
   }
 
-  let pelotonApiBboxJson: string;
+  console.log(`[api/hotels] Processing ${freeText ? 'hotel' : 'city'} search at (${lat}, ${lng})`);
 
   try {
-    if (mapboxBboxStr) {
-      const parsedMapboxBbox = JSON.parse(mapboxBboxStr) as [number, number, number, number];
-      if (Array.isArray(parsedMapboxBbox) && parsedMapboxBbox.length === 4 && parsedMapboxBbox.every(coord => typeof coord === 'number')) {
-        pelotonApiBboxJson = createPelotonBboxFromMapbox(parsedMapboxBbox, lat, lng);
-      } else {
-        console.warn("[api/hotels] Invalid mapboxBbox string received, falling back to default bbox:", mapboxBboxStr);
-        pelotonApiBboxJson = createDefaultPelotonBbox(lat, lng);
-      }
-    } else {
-      // If no mapboxBbox is provided (e.g., for a POI search or if Mapbox didn't return one),
-      // create a default, consistent bounding box around the lat/lng.
-      pelotonApiBboxJson = createDefaultPelotonBbox(lat, lng);
-    }
-  } catch (e) {
-    console.error("[api/hotels] Error parsing mapboxBbox string:", mapboxBboxStr, e);
-    // Fallback to default if parsing fails
-    pelotonApiBboxJson = createDefaultPelotonBbox(lat, lng);
-  }
-  
-  try {
-    console.log(`[api/hotels] Requesting hotels with pelotonApiBboxJson: ${pelotonApiBboxJson}, searchTerm: ${searchTerm}`);
-    
-    // getCachedHotelsByCriteria handles fetching, transformation, and caching
-    const result = await getCachedHotelsByCriteria(
-      pelotonApiBboxJson,
-      searchTerm, // This is used as searchTermForPelotonCsrf
-      lat,        // For the cityCenter in response
-      lng         // For the cityCenter in response
-    );
-    
-    console.log(`[api/hotels] Found ${result.hotels.length} hotels for searchTerm: ${searchTerm} at ${lat},${lng}`);
+    // Get hotels from the Peloton API with caching
+    const { hotels, cityCenter, cityBbox: returnedBbox } = await getCachedHotelsByCriteria({
+      lat,
+      lng,
+      searchTerm,
+      featureType,
+      providedCityBbox: cityBbox // Use the provided cityBbox if available
+    });
 
-    // Perform fuzzy match if hotel freeText provided
-    const { hotels } = result;
-    let matchedHotel: ClientHotel | null = null;
-    let matchConfidence: number | null = null;
-    if (freeText) {
-      console.log(`[api/hotels] Fuzzy matching for freeText: "${freeText}" against ${hotels.length} hotels.`);
-      const { hotel, matchConfidence: confidence } = findHotelByFuzzyMatch(hotels, freeText);
-      console.log(`[api/hotels] Fuzzy match result:`, { hotelId: hotel?.id, confidence });
-      matchedHotel = hotel;
-      matchConfidence = confidence;
-    }
-    const responsePayload = {
+    // Prepare the base response
+    const response: HotelsApiResponse = {
       hotels,
-      cityCenter: [lng, lat], // Standardize to [lng, lat] for Mapbox GL JS
-      matchedHotel,
-      matchConfidence,
-    } as HotelsApiResponse;
+      cityCenter,
+      cityBbox: returnedBbox // Include the bbox used/generated for this search
+    };
     
-    return NextResponse.json(responsePayload);
+    // For hotel searches, perform fuzzy matching
+    if (freeText) {
+      const { matchedHotel, confidence } = await findHotelByFuzzyMatch(hotels, freeText);
+      
+      if (matchedHotel) {
+        console.log(`[api/hotels] Found match for "${freeText}": ${matchedHotel.name} (${confidence.toFixed(2)})`);
+        response.matchedHotel = matchedHotel;
+        response.matchConfidence = confidence;
+      } else {
+        console.log(`[api/hotels] No good match found for "${freeText}"`);
+        response.matchedHotel = null;
+        response.matchConfidence = null;
+      }
+    }
 
-  } catch (error: any) {
-    console.error(
-      `[api/hotels] Error processing request for searchTerm ${searchTerm} at ${lat},${lng}:`,
-      error instanceof Error ? error.message : error,
-      error instanceof Error && error.stack ? `\nStack: ${error.stack}` : ''
-    );
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    return NextResponse.json(response);
+  } catch (error) {
+    console.error("[api/hotels] Error fetching hotels:", error);
     return NextResponse.json(
-      { error: `Failed to retrieve hotel data: ${errorMessage}` },
+      { error: "Failed to fetch hotels" },
       { status: 500 }
     );
   }

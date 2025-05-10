@@ -5,115 +5,208 @@ import {
   type RawPelotonHotel,
 } from "./pelotonAPI";
 import { unstable_cache as nextCache } from "next/cache";
-import Fuse, { type IFuseOptions } from "fuse.js";
+import Fuse from "fuse.js";
+import { calculateDistance } from "./utils";
 
-// interface CityBbox { // Now unused
-//   coords: [[number, number], [number, number], [number, number], [number, number]];
-//   center: { lat: number; lng: number };
-// }
+// Type for search parameters
+interface HotelSearchParams {
+  lat: number;
+  lng: number;
+  searchTerm: string;
+  featureType?: string;
+  providedCityBbox?: string | null;
+}
 
-// MVP: Hardcoded city bounding boxes
-// const cityBboxData: Record<string, CityBbox> = { // Now unused
-//   chicago: {
-//     coords: [
-//       [41.644, -87.94],
-//       [42.023, -87.94],
-//       [42.023, -87.523],
-//       [41.644, -87.523],
-//     ],
-//     center: { lat: 41.878, lng: -87.629 },
-//   },
-//   newyork: {
-//     coords: [
-//       [40.477399, -74.25909],
-//       [40.917577, -74.25909],
-//       [40.917577, -73.700272],
-//       [40.477399, -73.700272],
-//     ],
-//     center: { lat: 40.7128, lng: -74.006 },
-//   },
-//   // Add other cities as needed
-// };
+// Type for the response from the service
+interface HotelSearchResponse {
+  hotels: ClientHotel[];
+  cityCenter: [number, number]; // [lng, lat] for Mapbox
+  cityBbox: string; // The bbox used for the search
+}
 
-// Helper function to get and transform hotel data, with caching
-// Renamed from getAndTransformHotelsByCity and adapted parameters
-const getAndTransformHotels = async (bboxJson: string, searchTermForPelotonCsrf: string): Promise<ClientHotel[]> => {
-  // Fetch raw data using the new parameter name
+/**
+ * Helper function to get and transform hotel data with caching
+ * This is the core function that fetches data from Peloton and applies transformations
+ */
+const getAndTransformHotels = async (bboxJson: string, searchTerm: string): Promise<ClientHotel[]> => {
+  console.log(`[hotelService] Fetching hotels with bboxJson: ${bboxJson}`);
+  
+  // Fetch raw data from Peloton API
   const rawHotels: RawPelotonHotel[] = await fetchPelotonHotels({ 
     bboxJson, 
-    searchTermForPelotonCsrf 
+    searchTermForPelotonCsrf: searchTerm
   });
+  
+  // Transform the raw data to our client-friendly format
   return transformPelotonHotelData(rawHotels);
 };
 
 /**
- * Retrieves cached hotel data for a given bounding box and search term (for CSRF).
- * Uses Next.js unstable_cache for server-side caching.
- * Renamed from getCachedHotelsByCity
+ * Retrieves cached hotel data for a given search criteria.
+ * Uses Next.js unstable_cache as our single source of truth for caching.
  */
 export const getCachedHotelsByCriteria = async (
-  bboxJson: string, // This will be the primary part of the cache key
-  searchTermForPelotonCsrf: string, // Used for fetching, not directly in cache key here to avoid fragmentation if only bbox matters for data
-  centerLat: number, // For the cityCenter in response
-  centerLng: number  // For the cityCenter in response
-): Promise<{ hotels: ClientHotel[]; cityCenter: [number, number] }> => {
-  console.log(`[hotelService] Getting hotels for bboxJson (cache key): ${bboxJson}, searchTermForCsrf: ${searchTermForPelotonCsrf}`);
-
-  // The cache key is now based on the bboxJson to ensure that identical geographical queries are cached together.
-  // searchTermForPelotonCsrf is used in the underlying fetch but not part of this primary cache key
-  // to prevent cache misses if only the search term text changes slightly but the geo area is the same.
-  const getFreshData = () => getAndTransformHotels(bboxJson, searchTermForPelotonCsrf);
+  params: HotelSearchParams
+): Promise<HotelSearchResponse> => {
+  const { lat, lng, searchTerm, featureType, providedCityBbox } = params;
   
-  const cachedHotels = await nextCache(
-    getFreshData,
-    [`peloton-hotels-${bboxJson}`], // Cache key based on bboxJson
-    {
-      revalidate: 3600, // 1 hour
-      tags: [`peloton-hotels-data`, `peloton-hotels-bbox-${bboxJson}`], // Added specific bbox tag
-    }
+  // Determine if this is a hotel search
+  const isHotelSearch = featureType === 'poi';
+  
+  // Determine which bounding box JSON to use
+  let bboxJson: string;
+  
+  if (providedCityBbox) {
+    // Reuse the provided city bbox for better caching
+    console.log(`[hotelService] Using provided cityBbox: ${providedCityBbox}`);
+    bboxJson = providedCityBbox;
+  } else {
+    // Generate a new bbox based on search type
+    bboxJson = isHotelSearch 
+      ? generateNarrowBbox(lat, lng) 
+      : generateWideBbox(lat, lng);
+    console.log(`[hotelService] Generated new ${isHotelSearch ? 'narrow' : 'wide'} bbox`);
+  }
+
+  // Fetch and transform, using Next.js cache
+  const hotels = await nextCache(
+    () => getAndTransformHotels(bboxJson, searchTerm),
+    [`peloton-hotels-${bboxJson}`],
+    { revalidate: 3600, tags: [`peloton-hotels-data`, `peloton-hotels-bbox-${bboxJson}`] }
   )();
 
-  return { hotels: cachedHotels, cityCenter: [centerLat, centerLng] };
+  // For hotel searches, calculate and sort by distance from search point
+  if (isHotelSearch) {
+    hotels.forEach(hotel => {
+      hotel.distance_m = Math.round(calculateDistance(lat, lng, hotel.lat, hotel.lng) * 1000);
+    });
+    
+    hotels.sort((a, b) => (a.distance_m || Infinity) - (b.distance_m || Infinity));
+  }
+
+  return { 
+    hotels, 
+    cityCenter: [lng, lat], 
+    cityBbox: bboxJson 
+  };
 };
 
-// --- Booking Checker Utilities ---
+/**
+ * Generates a bounding box string suitable for hotel searches (narrow, ~2km)
+ */
+export const generateNarrowBbox = (lat: number, lng: number): string => {
+  // Create a bounding box roughly 2km around the point
+  const offset = 0.02; // ~2km at mid-latitudes
+  return JSON.stringify({
+    coords: [
+      [lat - offset, lng - offset],
+      [lat + offset, lng - offset],
+      [lat + offset, lng + offset],
+      [lat - offset, lng + offset],
+    ],
+    center: { lat, lng },
+  });
+};
 
+/**
+ * Generates a bounding box string suitable for city searches (wide, ~10km)
+ */
+export const generateWideBbox = (lat: number, lng: number): string => {
+  // Create a bounding box roughly 10km around the point
+  const offset = 0.1; // ~10km at mid-latitudes
+  return JSON.stringify({
+    coords: [
+      [lat - offset, lng - offset],
+      [lat + offset, lng - offset],
+      [lat + offset, lng + offset],
+      [lat - offset, lng + offset],
+    ],
+    center: { lat, lng },
+  });
+};
+
+/**
+ * Check if a point falls within a bounding box
+ */
+export const isPointInBbox = (lat: number, lng: number, bbox: any): boolean => {
+  try {
+    if (bbox.coords && Array.isArray(bbox.coords) && bbox.coords.length === 4) {
+      const [sw, nw, ne, se] = bbox.coords;
+      const minLat = Math.min(sw[0], se[0]);
+      const maxLat = Math.max(nw[0], ne[0]);
+      const minLng = Math.min(sw[1], nw[1]);
+      const maxLng = Math.max(se[1], ne[1]);
+      
+      return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng;
+    }
+    
+    if (bbox.bbox && Array.isArray(bbox.bbox) && bbox.bbox.length === 2) {
+      const [[minLng, minLat], [maxLng, maxLat]] = bbox.bbox;
+      return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("[hotelService] Error checking point in bbox:", error);
+    return false;
+  }
+};
+
+// Fuzzy match return type
 interface FuzzyMatchResult {
-  matchConfidence: number | null; // Fuse.js score (0 is perfect match, 1 is no match)
-  hotel: ClientHotel | null;
-  hasBikes: boolean;
+  matchedHotel: ClientHotel | null;
+  confidence: number;
 }
 
-export const findHotelByFuzzyMatch = (
+/**
+ * Find a hotel using fuzzy name matching
+ */
+export async function findHotelByFuzzyMatch(
   hotels: ClientHotel[],
-  freeText: string,
-  fuseThreshold: number = 0.4 // ADJUSTED: Stricter threshold
-): FuzzyMatchResult => {
-  if (!hotels || hotels.length === 0) {
-    return { matchConfidence: null, hotel: null, hasBikes: false };
+  freeText: string
+): Promise<FuzzyMatchResult> {
+  // Skip if no text input or no hotels to search
+  if (!freeText || !hotels.length) {
+    return { matchedHotel: null, confidence: 0 };
   }
 
-  const fuseOptions: IFuseOptions<ClientHotel> = {
+  // Convert freeText to lowercase for basic normalization
+  freeText = freeText.toLowerCase().trim();
+
+  // Setup Fuse.js with options focused on hotel name and brand
+  const fuse = new Fuse(hotels, {
     includeScore: true,
-    keys: ["name"], // Key to search in
-    threshold: fuseThreshold,
-  };
+    keys: [
+      { name: 'name', weight: 0.7 },
+      { name: 'brand', weight: 0.3 },
+    ],
+    threshold: 0.6, // Set a threshold to limit poor matches
+  });
 
-  const fuse = new Fuse(hotels, fuseOptions);
-  const results = fuse.search(freeText);
+  // Get matches sorted by score (lower score = better match)
+  const searchResults = fuse.search(freeText);
 
-  if (results.length === 0) {
-    return { matchConfidence: null, hotel: null, hasBikes: false };
+  // If we have no matches even within the threshold
+  if (searchResults.length === 0) {
+    return { matchedHotel: null, confidence: 0 };
   }
-
-  const bestMatch = results[0];
-  const matchedHotel = bestMatch.item;
-  const matchConfidence = bestMatch.score ?? null; // Fuse.js score: 0 (exact) to 1 (distant)
-  const hasBikes = matchedHotel.total_bikes > 0;
-
+  
+  // Use the top match
+  const topMatch = searchResults[0];
+  const hotel = topMatch.item;
+  const confidence = topMatch.score ? Math.max(0, 1 - topMatch.score) : 0.5;
+  
+  // Only consider it a match if confidence is above 0.4 (this can be adjusted)
+  if (confidence < 0.4) {
+    return { matchedHotel: null, confidence };
+  }
+  
+  console.log(
+    `[hotelService] Fuzzy matched "${freeText}" to hotel "${hotel.name}" (confidence: ${confidence.toFixed(3)}).`
+  );
+  
   return {
-    matchConfidence,
-    hotel: matchedHotel,
-    hasBikes,
+    matchedHotel: hotel,
+    confidence
   };
-}; 
+} 
