@@ -87,7 +87,7 @@ interface FuzzyMatchResult {
 export const findHotelByFuzzyMatch = (
   hotels: ClientHotel[],
   freeText: string,
-  fuseThreshold = 0.6 // Default threshold, can be tuned
+  fuseThreshold: number = 0.4 // ADJUSTED: Stricter threshold
 ): FuzzyMatchResult => {
   if (!hotels || hotels.length === 0) {
     return { matchConfidence: null, hotel: null, hasBikes: false };

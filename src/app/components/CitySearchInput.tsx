@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import { SearchBox } from '@mapbox/search-js-react';
 // Attempting to use the types as documented or inferring them based on usage.
 
@@ -10,6 +10,8 @@ export interface MapboxGeocodingFeature {
   placeName: string;
   mapboxBbox?: [number, number, number, number];
   featureType?: string;
+  category?: string;
+  hotelName?: string;
 }
 
 interface MapboxSearchInputProps {
@@ -28,6 +30,7 @@ export default function MapboxSearchInput({
   initialValue = '',
 }: MapboxSearchInputProps) {
   const [value, setValue] = useState(initialValue);
+  const sessionTokenRef = useRef<string>(crypto.randomUUID());
 
   const handleRetrieve = useCallback(
     (response: any) => {
@@ -37,15 +40,19 @@ export default function MapboxSearchInput({
           const lng = feature.geometry.coordinates[0];
           const lat = feature.geometry.coordinates[1];
           const placeName = feature.properties?.place_formatted || feature.properties?.name || '';
+          const hotelName = feature.properties?.name;
           const mapboxBbox = feature.bbox;
           const featureType = feature.properties?.feature_type;
+          const category = feature.properties?.category ?? featureType;
   
           onLocationRetrieved({
             lat,
             lng,
             placeName,
+            hotelName,
             mapboxBbox,
             featureType,
+            category,
           });
         } else {
           console.warn("[MapboxSearchInput] Retrieved feature has invalid geometry:", feature);
@@ -66,9 +73,12 @@ export default function MapboxSearchInput({
   const searchOptions = {
     language: 'en' as const, // Use 'as const' for literal types
     types: 'place,poi' as string, // Comma-separated string for types
-    categories: ['lodging', 'place.city', 'place.region', 'place.country', 'place.postcode', 'place.district', 'place.locality', 'place.neighborhood'],
-    limit: 5,
-    bbox: [-125.0, 24.0, -66.5, 49.5] as [number,number,number,number], // Continental US, ensure type
+    // types: 'place,poi' as string, // Comma-separated string for types
+    categories: ['lodging', 'place.city'], // TODO: We may need to add more categories here for countries other than the US
+    poi_category: ['lodging'],
+    // categories: ['lodging', 'place.city', 'place.region', 'place.country', 'place.postcode', 'place.district', 'place.locality', 'place.neighborhood'],
+    limit: 3,
+    bbox: [-125.0, 24.0, -66.5, 49.5] as [number,number,number,number], // Continental US, ensure type // TODO: We may need to add more bbox here for countries other than the US
     debounceEvents: 300,
   };
 
@@ -77,6 +87,7 @@ export default function MapboxSearchInput({
       {/* @ts-expect-error // Temporarily ignore JSX component type error, as per linter suggestion */}
       <SearchBox
         accessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || ''}
+        sessionToken={sessionTokenRef.current}
         value={value}
         onChange={(text) => setValue(text)}
         onRetrieve={handleRetrieve} // The type of handleRetrieve should be compatible now

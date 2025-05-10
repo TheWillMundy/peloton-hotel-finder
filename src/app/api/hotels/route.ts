@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 //   ClientHotel,
 // } from "../../lib/pelotonAPI"; // Corrected to relative path
 // import { unstable_cache as nextCache } from "next/cache"; // For server-side data caching
-import { getCachedHotelsByCriteria } from "@/lib/hotelService"; // Corrected import
+import { getCachedHotelsByCriteria, findHotelByFuzzyMatch } from "@/lib/hotelService"; // Corrected import
 import type { ClientHotel } from "@/lib/pelotonAPI"; // Re-add ClientHotel type import
 
 // Very basic city center/bbox data - extend this or use a geocoding service
@@ -26,6 +26,8 @@ import type { ClientHotel } from "@/lib/pelotonAPI"; // Re-add ClientHotel type 
 interface HotelsApiResponse {
   hotels: ClientHotel[];
   cityCenter: [number, number]; // Service now guarantees this. Lng, Lat order for response consistency.
+  matchedHotel?: ClientHotel | null;    // Fuzzy matched hotel when freeText provided
+  matchConfidence?: number | null;      // Confidence score for the match
 }
 
 // Helper to create a default Peloton BBox JSON string from lat/lng
@@ -66,6 +68,7 @@ export async function GET(request: NextRequest) {
   const lngStr = searchParams.get("lng");
   const mapboxBboxStr = searchParams.get("mapboxBbox"); // Optional: "[minLng,minLat,maxLng,maxLat]"
   const searchTerm = searchParams.get("searchTerm");
+  const freeText = searchParams.get("freeText"); // Optional hotel name for fuzzy match
   // const featureType = searchParams.get("featureType"); // Not directly used yet, but good for future logic
 
   if (!latStr || !lngStr || !searchTerm) {
@@ -111,7 +114,7 @@ export async function GET(request: NextRequest) {
     console.log(`[api/hotels] Requesting hotels with pelotonApiBboxJson: ${pelotonApiBboxJson}, searchTerm: ${searchTerm}`);
     
     // getCachedHotelsByCriteria handles fetching, transformation, and caching
-    const result: HotelsApiResponse = await getCachedHotelsByCriteria(
+    const result = await getCachedHotelsByCriteria(
       pelotonApiBboxJson,
       searchTerm, // This is used as searchTermForPelotonCsrf
       lat,        // For the cityCenter in response
@@ -120,24 +123,36 @@ export async function GET(request: NextRequest) {
     
     console.log(`[api/hotels] Found ${result.hotels.length} hotels for searchTerm: ${searchTerm} at ${lat},${lng}`);
 
-    // Ensure the cityCenter in the response is [lng, lat] for Mapbox/frontend consistency
-    const responsePayload: HotelsApiResponse = {
-      hotels: result.hotels,
-      cityCenter: [lng, lat] // Standardize to [lng, lat] for Mapbox GL JS on client
-    };
+    // Perform fuzzy match if hotel freeText provided
+    const { hotels } = result;
+    let matchedHotel: ClientHotel | null = null;
+    let matchConfidence: number | null = null;
+    if (freeText) {
+      console.log(`[api/hotels] Fuzzy matching for freeText: "${freeText}" against ${hotels.length} hotels.`);
+      const { hotel, matchConfidence: confidence } = findHotelByFuzzyMatch(hotels, freeText);
+      console.log(`[api/hotels] Fuzzy match result:`, { hotelId: hotel?.id, confidence });
+      matchedHotel = hotel;
+      matchConfidence = confidence;
+    }
+    const responsePayload = {
+      hotels,
+      cityCenter: [lng, lat], // Standardize to [lng, lat] for Mapbox GL JS
+      matchedHotel,
+      matchConfidence,
+    } as HotelsApiResponse;
     
     return NextResponse.json(responsePayload);
 
   } catch (error: any) {
-    console.error(`[api/hotels] Error processing request for searchTerm ${searchTerm} at ${lat},${lng}:`, error);
-    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-    
-    // Distinguish between service-level "not found" (e.g. Peloton returns empty for a valid bbox)
-    // and actual server errors. For now, 500 for any error from service.
-    // The service itself logs details.
+    console.error(
+      `[api/hotels] Error processing request for searchTerm ${searchTerm} at ${lat},${lng}:`,
+      error instanceof Error ? error.message : error,
+      error instanceof Error && error.stack ? `\nStack: ${error.stack}` : ''
+    );
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
     return NextResponse.json(
       { error: `Failed to retrieve hotel data: ${errorMessage}` },
       { status: 500 }
     );
   }
-} 
+}

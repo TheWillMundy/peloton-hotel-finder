@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import mapboxgl, { LngLatLike, Marker } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useMapContext } from '@/app/contexts/MapContext';
@@ -48,60 +48,65 @@ if (typeof window !== 'undefined' && !document.getElementById(customPopupStylesI
   document.head.appendChild(styles);
 }
 
-// Helper to create a styled marker element for a hotel
+// Create a marker element wrapped in a container for positioning
 function createMarkerElement(
   hotel: ClientHotel,
   isMobile?: boolean,
   onMarkerHover?: (id: number | null) => void,
   onMarkerClick?: (hotel: ClientHotel) => void
 ): HTMLDivElement {
-  const el = document.createElement('div');
-  el.dataset.hotelId = hotel.id.toString();
-  el.style.width = "40px";
-  el.style.height = "40px";
-  el.style.borderRadius = "50%";
-  el.style.cursor = "pointer";
-  el.style.display = "flex";
-  el.style.alignItems = "center";
-  el.style.justifyContent = "center";
-  el.style.color = "white";
-  el.style.fontWeight = "bold";
-  el.style.fontSize = "15px";
-  el.style.boxShadow = "0 3px 6px rgba(0,0,0,0.15)";
-  el.style.border = "2px solid white";
-  el.style.transition = "transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out";
+  // Inner styled element (circle)
+  const inner = document.createElement('div');
+  inner.style.width = "40px";
+  inner.style.height = "40px";
+  inner.style.borderRadius = "50%";
+  inner.style.cursor = "pointer";
+  inner.style.display = "flex";
+  inner.style.alignItems = "center";
+  inner.style.justifyContent = "center";
+  inner.style.color = "white";
+  inner.style.fontWeight = "bold";
+  inner.style.fontSize = "15px";
+  inner.style.boxShadow = "0 3px 6px rgba(0,0,0,0.15)";
+  inner.style.border = "2px solid white";
+  inner.style.transition = "transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out";
 
   // Set background color based on bike availability
   if (hotel.total_bikes && hotel.total_bikes > 0) {
     if (hotel.in_room) {
-      el.style.backgroundColor = "#4A90E2";
-      el.style.borderColor = "rgba(74, 144, 226, 0.5)";
+      inner.style.backgroundColor = "#4A90E2";
+      inner.style.borderColor = "rgba(74, 144, 226, 0.5)";
     } else if (hotel.total_bikes >= 3) {
-      el.style.backgroundColor = "#58B794";
-      el.style.borderColor = "rgba(88, 183, 148, 0.5)";
+      inner.style.backgroundColor = "#58B794";
+      inner.style.borderColor = "rgba(88, 183, 148, 0.5)";
     } else {
-      el.style.backgroundColor = "#F5BD41";
-      el.style.borderColor = "rgba(245, 189, 65, 0.5)";
+      inner.style.backgroundColor = "#F5BD41";
+      inner.style.borderColor = "rgba(245, 189, 65, 0.5)";
     }
-    el.innerText = String(hotel.total_bikes);
+    inner.innerText = String(hotel.total_bikes);
   } else {
-    el.style.backgroundColor = "#9AA1B1";
-    el.style.borderColor = "rgba(154, 161, 177, 0.5)";
-    el.innerText = "P";
+    inner.style.backgroundColor = "#9AA1B1";
+    inner.style.borderColor = "rgba(154, 161, 177, 0.5)";
+    inner.innerText = "P";
   }
 
-  // Attach event listeners
+  // Wrapper for Mapbox positioning and event handling
+  const wrapper = document.createElement('div');
+  wrapper.dataset.hotelId = hotel.id.toString();
+  wrapper.appendChild(inner);
+
+  // Attach event listeners on wrapper
   if (!isMobile) {
-    el.addEventListener('mouseenter', () => onMarkerHover && onMarkerHover(hotel.id));
-    el.addEventListener('mouseleave', () => onMarkerHover && onMarkerHover(null));
+    wrapper.addEventListener('mouseenter', () => onMarkerHover && onMarkerHover(hotel.id));
+    wrapper.addEventListener('mouseleave', () => onMarkerHover && onMarkerHover(null));
   }
-  el.addEventListener('click', (e: MouseEvent) => {
+  wrapper.addEventListener('click', (e: MouseEvent) => {
     e.stopPropagation();
     if (isMobile && onMarkerHover) onMarkerHover(hotel.id);
     if (onMarkerClick) onMarkerClick(hotel);
   });
 
-  return el;
+  return wrapper;
 }
 
 const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, hoveredHotelId, onMarkerClick, onMapLoad, isMobile, onMarkerHover, mapReady }) => {
@@ -112,7 +117,6 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
   const markersRef = useRef<Marker[]>([]);
   const { center, setCenter, zoom, setZoom } = useMapContext();
   const userInitiatedMove = useRef(false);
-  const currentHoveredMarkerElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return; // Initialize map only once
@@ -195,84 +199,87 @@ const MapboxMap: React.FC<MapboxMapProps> = ({ hotels, mapRef: externalMapRef, h
     }
   }, [center, map, zoom, mapReady]); // React to center changes for flying. Zoom is handled by map init and user.
 
-  useEffect(() => {
-    const currentMap = map.current;
+  // Helper function to apply hover/dim/default styles to markers
+  const applyMarkerStyles = useCallback(() => {
+    markersRef.current.forEach(marker => {
+      const wrapper = marker.getElement();
+      const inner = wrapper.firstElementChild as HTMLElement;
+      const markerHotelId = wrapper.dataset.hotelId;
+      
+      // Default styles (for mobile or non-hovered/non-dimmed desktop)
+      let scale = 1;
+      let opacity = '1'; // Opacity on inner
+      let zIndex = '1';  // zIndex on wrapper
+      let shadow = '0 3px 6px rgba(0,0,0,0.15)'; // Default shadow for inner
 
-    if (!currentMap || !currentMap.isStyleLoaded() || !mapReady) {
-      markersRef.current.forEach(marker => marker.remove());
-      markersRef.current = [];
-      return;
-    }
-
-    markersRef.current.forEach(marker => marker.remove());
-    markersRef.current = [];
-
-    hotels.forEach(hotel => {
-      if (typeof hotel.lat === 'number' && typeof hotel.lng === 'number') {
-        const el = createMarkerElement(hotel, isMobile, onMarkerHover, onMarkerClick);
-        const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
-          .setLngLat([hotel.lng, hotel.lat])
-          .addTo(currentMap!);
-        el.dataset.origBoxShadow = el.style.boxShadow || '';
-        markersRef.current.push(marker);
-      }
-    });
-  }, [hotels, onMarkerClick, isMobile, onMarkerHover, mapReady]);
-
-  // Effect to handle hoveredHotelId (from list or direct marker hover)
-  useEffect(() => {
-    const currentMap = map.current;
-    if (!currentMap || !currentMap.isStyleLoaded()) {
-      return;
-    }
-
-    // Reset style for the previously hovered element (if any)
-    if (currentHoveredMarkerElementRef.current) {
-      const prevElement = currentHoveredMarkerElementRef.current;
-      prevElement.style.transform = prevElement.style.transform.replace(/scale\([^)]*\)/g, '').trim(); // Remove scale
-      prevElement.style.boxShadow = prevElement.dataset.origBoxShadow || '';
-      prevElement.style.zIndex = '1';
-      // prevElement.style.opacity = '1'; // Will be handled by the loop below if it's not the new hovered one
-      currentHoveredMarkerElementRef.current = null;
-    }
-    
-    // Apply styles based on the new hoveredHotelId
-    markersRef.current.forEach(m => {
-      const markerElement = m.getElement() as HTMLElement;
-      if (markerElement.dataset.hotelId === String(hoveredHotelId)) {
-        // This is the newly hovered marker
-        const baseTransform = markerElement.style.transform.replace(/scale\([^)]*\)/g, '').trim();
-        markerElement.style.transform = `${baseTransform} scale(1.15)`;
-        markerElement.style.boxShadow = '0 6px 15px rgba(0,0,0,0.3)';
-        markerElement.style.zIndex = '10';
-        markerElement.style.opacity = '1';
-        currentHoveredMarkerElementRef.current = markerElement;
-      } else {
-        // This is not the hovered marker
-        // Only apply opacity change on desktop
-        if (!isMobile) {
-          markerElement.style.opacity = '0.6'; // Deactivate other markers (desktop only)
-        } else {
-          markerElement.style.opacity = '1'; // Keep full opacity on mobile
-        }
+      if (!isMobile) {
+        const isHovered = markerHotelId == hoveredHotelId;
+        const isDimmed = hoveredHotelId !== null && !isHovered;
         
-        // Ensure non-hovered markers are not scaled (redundant if prevElement logic is robust, but safe)
-        const baseTransform = markerElement.style.transform.replace(/scale\([^)]*\)/g, '').trim();
-        markerElement.style.transform = baseTransform;
-        markerElement.style.zIndex = '1';
-        markerElement.style.boxShadow = markerElement.dataset.origBoxShadow || '';
+        scale = isHovered ? 1.2 : isDimmed ? 0.9 : 1;
+        opacity = isDimmed ? '0.6' : '1'; // Opacity on inner
+        zIndex = isHovered ? '10' : '1';    // zIndex on wrapper
+        shadow = isHovered ? '0 5px 15px rgba(0,0,0,0.3)' : '0 3px 6px rgba(0,0,0,0.15)'; // Shadow for inner
+      }
+      
+      // Apply styles
+      // Ensure transition is always present for smooth changes if isMobile state flips
+      inner.style.transition = 'transform 0.1s ease-out, box-shadow 0.1s ease-out, opacity 0.2s ease-in-out';
+      inner.style.transform = `scale(${scale})`;
+      inner.style.opacity = opacity; 
+      inner.style.boxShadow = shadow;
+
+      wrapper.style.zIndex = zIndex;
+    });
+  }, [hoveredHotelId, isMobile]); // Added isMobile to dependency array
+
+  // Effect to add/update markers when hotels change or map is ready
+  useEffect(() => {
+    const currentMap = map.current;
+    // Only proceed when map instance exists and is flagged ready
+    if (!currentMap || !mapReady) {
+      return;
+    }
+    console.log('[MapboxMap] updating markers, hotel count:', hotels.length);
+
+    // Remove old markers not in hotels
+    const hotelIdsInProps = new Set(hotels.map(h => h.id.toString()));
+    markersRef.current = markersRef.current.filter(marker => {
+      const id = marker.getElement().dataset.hotelId;
+      if (id && !hotelIdsInProps.has(id)) {
+        marker.remove();
+        return false;
+      }
+      return true;
+    });
+
+    // Add new markers
+    const existingIds = new Set(markersRef.current.map(m => m.getElement().dataset.hotelId));
+    hotels.forEach(hotel => {
+      const idStr = hotel.id.toString();
+      if (!existingIds.has(idStr)) {
+        const el = createMarkerElement(hotel, isMobile, onMarkerHover, onMarkerClick);
+        const newMarker = new mapboxgl.Marker(el)
+          .setLngLat([hotel.lng, hotel.lat])
+          .addTo(currentMap);
+        markersRef.current.push(newMarker);
       }
     });
 
-    if (!hoveredHotelId && !currentHoveredMarkerElementRef.current) {
-      // Explicitly reset all opacities if nothing is hovered (e.g. mouse left list and map)
-      markersRef.current.forEach(m => {
-        const markerElement = m.getElement() as HTMLElement;
-        markerElement.style.opacity = '1';
-      });
-    }
+    // Apply styles immediately
+    applyMarkerStyles();
 
-  }, [hoveredHotelId, map, hotels, isMobile]);
+    // Re-apply styles after map movements to preserve scale
+    currentMap.on('moveend', applyMarkerStyles);
+    return () => {
+      currentMap.off('moveend', applyMarkerStyles);
+    };
+  }, [hotels, mapReady, isMobile, onMarkerHover, onMarkerClick, applyMarkerStyles, map]); // Added map to dependency array
+
+  // Reapply marker styling whenever hoveredHotelId changes
+  useEffect(() => {
+    applyMarkerStyles();
+  }, [applyMarkerStyles, map]); // Added map to the dependency array
 
   return <div ref={mapContainer} style={{ position: 'absolute', top: 0, bottom: 0, width: '100%', height: '100%' }} />;
 };

@@ -18,6 +18,7 @@ import HotelDetailModal from '@/app/components/HotelDetailModal';
 import BottomSheet, { BottomSheetState } from '@/app/components/BottomSheet';
 import { FilterChips, Filters } from '@/app/components/FilterChips';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 
 // Dynamically import MapboxSearchInput with SSR turned off
 const DynamicMapboxSearchInput = dynamic(
@@ -97,6 +98,7 @@ function HotelSearchPageContent() {
   const [initialPaddingSet, setInitialPaddingSet] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState<ClientHotel | null>(null);
   const [showFilters, setShowFilters] = useState(false); // State to toggle filter display
+  const [isHotelSearch, setIsHotelSearch] = useState(false); // True when user selects a lodging result
 
   const [activeFilters, setActiveFilters] = useState<Filters>({
     inRoom: false,
@@ -125,6 +127,8 @@ function HotelSearchPageContent() {
   interface HotelsApiResponse {
     hotels: ClientHotel[];
     cityCenter?: [number, number]; // Lng, Lat from API response
+    matchedHotel?: ClientHotel | null; // Optional matched hotel for hotel searches
+    matchConfidence?: number | null;     // Optional confidence score for fuzzy match
   }
 
   // Actual TanStack Query for fetching hotels
@@ -135,11 +139,11 @@ function HotelSearchPageContent() {
     error: fetchError,
     isSuccess: isFetchSuccess,
   } = useQuery<HotelsApiResponse, Error>({ 
-    queryKey: ['hotels', selectedLocation?.lat, selectedLocation?.lng, selectedLocation?.placeName, JSON.stringify(selectedLocation?.mapboxBbox)],
+    queryKey: ['hotels', selectedLocation?.lat, selectedLocation?.lng, selectedLocation?.placeName, JSON.stringify(selectedLocation?.mapboxBbox), isHotelSearch],
     queryFn: async () => {
       if (!selectedLocation) return { hotels: [], cityCenter: undefined };
       
-      const { lat, lng, placeName, mapboxBbox, featureType } = selectedLocation;
+      const { lat, lng, placeName, mapboxBbox, featureType, hotelName } = selectedLocation;
       let apiUrl = `/api/hotels?lat=${lat}&lng=${lng}&searchTerm=${encodeURIComponent(placeName)}`;
       if (mapboxBbox) {
         apiUrl += `&mapboxBbox=${encodeURIComponent(JSON.stringify(mapboxBbox))}`;
@@ -147,6 +151,14 @@ function HotelSearchPageContent() {
       if (featureType) {
         apiUrl += `&featureType=${encodeURIComponent(featureType)}`;
       }
+      if (isHotelSearch) {
+        // Prioritize specific hotelName for freeText if available, else fallback to placeName
+        const textForFuzzyMatch = hotelName && hotelName.trim() !== '' ? hotelName : placeName;
+        apiUrl += `&freeText=${encodeURIComponent(textForFuzzyMatch)}`;
+      }
+
+      // Log the URL and whether this is a hotel search
+      console.log('[HotelsQuery] fetching', { apiUrl, isHotelSearch });
 
       const response = await fetch(apiUrl);
       if (!response.ok) {
@@ -154,6 +166,9 @@ function HotelSearchPageContent() {
         throw new Error(errorData.message || `Error: ${response.status}`);
       }
       const data: HotelsApiResponse = await response.json(); 
+
+      // Log summary of the response
+      console.log('[HotelsQuery] response', { hotelsCount: data.hotels.length, matchedHotelId: data.matchedHotel?.id, matchConfidence: data.matchConfidence });
       return data;
     },
     enabled: !!selectedLocation, // Only run query if a location is selected
@@ -162,20 +177,44 @@ function HotelSearchPageContent() {
 
   useEffect(() => {
     if (isFetchSuccess && apiResponse) {
-      // console.log('[page.tsx useQuery success] API Response Hotels:', apiResponse.hotels?.length);
-      setHotels(apiResponse.hotels || []); 
+      // Default behavior: display all hotels and center map on city
+      setHotels(apiResponse.hotels || []);
       if (apiResponse.cityCenter) {
-        setCenter(apiResponse.cityCenter); // API returns [lng, lat] for cityCenter
+        setCenter(apiResponse.cityCenter); // [lng, lat]
       }
     } else if (isFetchError && fetchError) {
       console.error("Failed to fetch hotels:", fetchError.message);
       setHotels([]); // Clear hotels on error
-      // toast({ title: "Error", description: fetchError.message, variant: "destructive" });
+      // Removed generic error toast; toasts handled in hotel search effect
     }
     // Intentionally excluding setCenter from deps array to avoid potential loops 
     // if setCenter itself causes a re-render that refetches. 
     // The map component effect handles flying to the new center.
   }, [isFetchSuccess, apiResponse, isFetchError, fetchError, setCenter]); 
+
+  // Handle hotel search: fly to matched hotel or show error + nearby results
+  useEffect(() => {
+    if (isFetchSuccess && apiResponse && isHotelSearch) {
+      const matchedHotel = apiResponse.matchedHotel;
+      const allHotels = apiResponse.hotels || [];
+      const cityCenter = apiResponse.cityCenter;
+      
+      if (matchedHotel) {
+        // Happy Case: Good confidence match
+        mapRef.current?.easeTo({ center: [matchedHotel.lng, matchedHotel.lat], zoom: 12 });
+        setHoveredHotelId(matchedHotel.id);
+        // Ensure displayedHotels reflects this primary match first
+        setHotels([matchedHotel, ...allHotels.filter(h => h.id !== matchedHotel.id)]);
+      } else {
+        // Sad Case: No hotel matched (server decided quality was too low)
+        const targetCenter = cityCenter || [selectedLocation?.lng || 0, selectedLocation?.lat || 0];
+        mapRef.current?.easeTo({ center: targetCenter, zoom: 10 });
+        toast.info('No Peloton available at that specific hotel. Showing nearby options.');
+        setHotels(allHotels); // Show all hotels for the area
+        setHoveredHotelId(null); // Clear any potentially sticky hover state
+      }
+    }
+  }, [isFetchSuccess, apiResponse, isHotelSearch, selectedLocation, setCenter, setHotels, setHoveredHotelId]);
 
   const filterChipOptions = useMemo(() => {
     if (!hotels) return [...PRIMARY_LOYALTY_PROGRAMS, "Other"]; // Default list if no hotels
@@ -210,6 +249,10 @@ function HotelSearchPageContent() {
   }, [hotels]);
 
   const displayedHotels = useMemo(() => {
+    // When user searched a specific hotel, show matched hotel first without resorting
+    if (isHotelSearch && apiResponse?.matchedHotel) {
+      return [apiResponse.matchedHotel, ...hotels.filter(h => h.id !== apiResponse.matchedHotel!.id)];
+    }
     // console.log('[page.tsx useMemo displayedHotels] Input hotels:', hotels?.length);
     let filtered = [...hotels];
 
@@ -260,7 +303,7 @@ function HotelSearchPageContent() {
     });
 
     return filtered;
-  }, [hotels, activeFilters]);
+  }, [hotels, activeFilters, isHotelSearch, apiResponse?.matchedHotel]);
 
   const handleHotelHover = useCallback((id: number | null) => {
     if (hoverTimeoutRef.current) {
@@ -418,7 +461,10 @@ function HotelSearchPageContent() {
 
   // This function is called when MapboxSearchInput successfully retrieves a location
   const handleLocationRetrieved = (feature: MapboxGeocodingFeature) => {
-    // console.log("Location retrieved:", feature);
+    // Check featureType for 'poi' or category for 'lodging'
+    const isLodgingSearch = feature.featureType === 'poi';
+    console.log('[handleLocationRetrieved] feature:', feature, 'isLodgingSearch:', isLodgingSearch); // Added log
+    setIsHotelSearch(isLodgingSearch);
     setSelectedLocation(feature);
     setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] });
     setShowFilters(false); // Hide filters on new search
