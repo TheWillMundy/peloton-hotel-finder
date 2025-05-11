@@ -5,7 +5,6 @@ import {
   type RawPelotonHotel,
 } from "./pelotonAPI";
 import { unstable_cache as nextCache } from "next/cache";
-import Fuse from "fuse.js";
 import { calculateDistance } from "./utils";
 
 // Type for search parameters
@@ -152,61 +151,75 @@ export const isPointInBbox = (lat: number, lng: number, bbox: any): boolean => {
   }
 };
 
-// Fuzzy match return type
+// Token-based matching parameters
+const DEFAULT_TOKEN_MATCH_RADIUS_KM = 0.15;
+const DEFAULT_MIN_TOKEN_COVERAGE = 0.6;
+
+// Token-coverage based matching result type
 interface FuzzyMatchResult {
   matchedHotel: ClientHotel | null;
   confidence: number;
 }
 
+// Basic name normalization function
+const normalizeHotelName = (name: string): string => {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/\b(the|a|an|hotel|inn|suites|resort|and|&|spa|by|collection)\b/g, '')
+    .replace(/[.,\-\/#!$%\^&\*;:{}=\-_`~()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 /**
- * Find a hotel using fuzzy name matching
+ * Find a hotel by geographic proximity first, then token coverage on name.
  */
 export async function findHotelByFuzzyMatch(
   hotels: ClientHotel[],
-  freeText: string
+  freeText: string,
+  searchLat?: number,
+  searchLng?: number
 ): Promise<FuzzyMatchResult> {
-  // Skip if no text input or no hotels to search
-  if (!freeText || !hotels.length) {
+  if (!freeText || hotels.length === 0) {
     return { matchedHotel: null, confidence: 0 };
   }
 
-  // Convert freeText to lowercase for basic normalization
-  freeText = freeText.toLowerCase().trim();
-
-  // Setup Fuse.js with options focused on hotel name and brand
-  const fuse = new Fuse(hotels, {
-    includeScore: true,
-    keys: [
-      { name: 'name', weight: 0.7 },
-      { name: 'brand', weight: 0.3 },
-    ],
-    threshold: 0.6, // Set a threshold to limit poor matches
-  });
-
-  // Get matches sorted by score (lower score = better match)
-  const searchResults = fuse.search(freeText);
-
-  // If we have no matches even within the threshold
-  if (searchResults.length === 0) {
+  const normalizedQuery = normalizeHotelName(freeText);
+  if (!normalizedQuery) {
     return { matchedHotel: null, confidence: 0 };
   }
-  
-  // Use the top match
-  const topMatch = searchResults[0];
-  const hotel = topMatch.item;
-  const confidence = topMatch.score ? Math.max(0, 1 - topMatch.score) : 0.5;
-  
-  // Only consider it a match if confidence is above 0.4 (this can be adjusted)
-  if (confidence < 0.4) {
-    return { matchedHotel: null, confidence };
+
+  const queryTokens = normalizedQuery.split(' ').filter(Boolean);
+  if (queryTokens.length === 0) {
+    return { matchedHotel: null, confidence: 0 };
   }
-  
-  console.log(
-    `[hotelService] Fuzzy matched "${freeText}" to hotel "${hotel.name}" (confidence: ${confidence.toFixed(3)}).`
-  );
-  
-  return {
-    matchedHotel: hotel,
-    confidence
-  };
+
+  // Gather and sort by proximity
+  const candidates = hotels
+    .map(hotel => {
+      const distanceKm = (searchLat !== undefined && searchLng !== undefined)
+        ? calculateDistance(searchLat, searchLng, hotel.lat, hotel.lng)
+        : Infinity;
+      return { hotel, distanceKm };
+    })
+    .filter(c => c.distanceKm <= DEFAULT_TOKEN_MATCH_RADIUS_KM)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  // Evaluate token coverage
+  for (const { hotel } of candidates) {
+    const normalizedName = normalizeHotelName(hotel.name);
+    const nameTokens = Array.from(new Set(normalizedName.split(' ').filter(Boolean)));
+    const matchCount = queryTokens.reduce(
+      (count, token) => nameTokens.includes(token) ? count + 1 : count,
+      0
+    );
+    const coverage = matchCount / queryTokens.length;
+    if (coverage >= DEFAULT_MIN_TOKEN_COVERAGE) {
+      return { matchedHotel: hotel, confidence: coverage };
+    }
+  }
+
+  // No suitable match
+  return { matchedHotel: null, confidence: 0 };
 } 

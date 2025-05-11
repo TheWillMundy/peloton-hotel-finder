@@ -29,6 +29,7 @@ interface HotelsApiResponse {
   matchedHotel?: ClientHotel | null;    // Fuzzy matched hotel when freeText provided
   matchConfidence?: number | null;      // Confidence score for the match
   cityBbox?: string;                    // The bounding box used/generated for this search
+  searchedPoinLocation?: { lat: number; lng: number; name: string } | null; // New field
 }
 
 // Define error response type separately
@@ -59,6 +60,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<HotelsApiR
   const freeText = searchParams.get("freeText") || null;
   const cityBbox = searchParams.get("cityBbox") || null;
   
+  // Capture the original search name if freeText is used, for the searchedPoinLocation field
+  const originalHotelSearchName = freeText; 
+
   // Validate required parameters
   if (isNaN(lat) || isNaN(lng)) {
     return NextResponse.json(
@@ -88,16 +92,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<HotelsApiR
     
     // For hotel searches, perform fuzzy matching
     if (freeText) {
-      const { matchedHotel, confidence } = await findHotelByFuzzyMatch(hotels, freeText);
+      const { matchedHotel, confidence } = await findHotelByFuzzyMatch(
+        hotels, 
+        freeText, 
+        lat, // Pass search lat for geo-awareness
+        lng  // Pass search lng for geo-awareness
+      );
       
       if (matchedHotel) {
         console.log(`[api/hotels] Found match for "${freeText}": ${matchedHotel.name} (${confidence.toFixed(2)})`);
         response.matchedHotel = matchedHotel;
         response.matchConfidence = confidence;
+        response.searchedPoinLocation = null; // Explicitly nullify if match found
       } else {
-        console.log(`[api/hotels] No good match found for "${freeText}"`);
+        console.log(`[api/hotels] No good match found for "${originalHotelSearchName}" by fuzzy match.`);
         response.matchedHotel = null;
-        response.matchConfidence = null;
+        response.matchConfidence = confidence; // Still return confidence even if no match above threshold
+        // If it was a hotel search (freeText provided) and no match, populate searchedPoinLocation
+        if (originalHotelSearchName) {
+          response.searchedPoinLocation = { lat, lng, name: originalHotelSearchName };
+        }
       }
     }
 
