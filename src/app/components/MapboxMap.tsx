@@ -18,6 +18,8 @@ interface MapboxMapProps {
   searchLocation?: { lat: number; lng: number } | null; // Location from currentIntent
   isHotelSearchIntent?: boolean; // Whether the current search is for a hotel
   matchedHotelId?: number | null; // ID of the matched hotel from API response
+  noMatchSearchLocation?: { lat: number; lng: number; searchTerm: string } | null; // New prop
+  mapTargetZoom?: number; // New prop
 }
 
 // Inject custom popup styles (from reference project)
@@ -152,7 +154,9 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   mapReady,
   searchLocation,
   isHotelSearchIntent,
-  matchedHotelId
+  matchedHotelId,
+  noMatchSearchLocation,
+  mapTargetZoom
 }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const internalMapRef = useRef<mapboxgl.Map | null>(null);
@@ -178,7 +182,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
     const initialCenter: [number, number] = locationFromProps
       ? [locationFromProps.lng, locationFromProps.lat]
       : [-87.6298, 41.8781];
-    const initialZoom = contextZoom || ZOOM_LEVELS.CITY;
+    const initialZoom = mapTargetZoom || (isHotelSearchIntent ? ZOOM_LEVELS.HOTEL : ZOOM_LEVELS.CITY);
 
     const newMap = new mapboxgl.Map({
       container: mapContainer.current,
@@ -204,14 +208,22 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   useEffect(() => {
     if (!map.current || !locationFromProps || !mapReady) return;
 
-    console.log('[MapboxMap] flyTo triggered for:', locationFromProps, 'isHotelSearch:', isHotelSearchIntent);
+    console.log('[MapboxMap] flyTo triggered for:', locationFromProps, 'isHotelSearch:', isHotelSearchIntent, 'targetZoom:', mapTargetZoom);
     if (map.current) {
         (map.current as any)._lastLocationChangeTime = performance.now(); 
     }
 
+    let zoomToUse = ZOOM_LEVELS.CITY; // Default
+    if (mapTargetZoom) {
+      zoomToUse = mapTargetZoom;
+    } else if (isHotelSearchIntent) {
+      zoomToUse = ZOOM_LEVELS.HOTEL;
+    }
+    // If noMatchSearchLocation is active, mapTargetZoom should already be NO_MATCH_CITY_OVERVIEW via page.tsx
+
     map.current.flyTo({
       center: [locationFromProps.lng, locationFromProps.lat],
-      zoom: isHotelSearchIntent ? ZOOM_LEVELS.HOTEL : ZOOM_LEVELS.CITY,
+      zoom: zoomToUse,
       essential: true,
       duration: 1000,
     });
@@ -238,7 +250,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
     };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationFromProps, isHotelSearchIntent, mapReady]); // mapReady ensures map is initialized
+  }, [locationFromProps, isHotelSearchIntent, mapReady, mapTargetZoom]); // mapReady ensures map is initialized
 
   // Effect for standalone zoom changes (e.g., from a zoom slider not tied to location change)
   useEffect(() => {
@@ -326,22 +338,23 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   const [needsSearchMarkerRender, setNeedsSearchMarkerRender] = useState(0);
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded() || !mapReady) return;
-    console.log('[MapboxMap] Evaluating search result marker. IsHotelIntent:', isHotelSearchIntent, 'Location:', locationFromProps);
+    console.log('[MapboxMap] Evaluating search result marker. NoMatchLocation:', noMatchSearchLocation, 'MatchedID:', matchedHotelId);
 
     if (searchMarkerRef.current) {
       searchMarkerRef.current.remove();
       searchMarkerRef.current = null;
     }
     
-    if (isHotelSearchIntent && locationFromProps) {
-      console.log('[MapboxMap] Rendering search result marker.');
+    // Only show search marker if it's a no-match scenario AND there isn't a matched hotel being displayed from a previous broader search.
+    if (noMatchSearchLocation && !matchedHotelId) { 
+      console.log('[MapboxMap] Rendering search result marker for NO MATCH at:', noMatchSearchLocation);
       const markerElement = createSearchResultMarker();
       searchMarkerRef.current = new mapboxgl.Marker({ element: markerElement })
-        .setLngLat([locationFromProps.lng, locationFromProps.lat])
+        .setLngLat([noMatchSearchLocation.lng, noMatchSearchLocation.lat])
         .addTo(map.current);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsSearchMarkerRender, locationFromProps, isHotelSearchIntent, mapReady]);
+  }, [needsSearchMarkerRender, noMatchSearchLocation, matchedHotelId, mapReady]); // Added noMatchSearchLocation, matchedHotelId
 
   // State and Effect for highlighting matched hotel (triggered by needsMarkerRender or specific prop changes)
   const [needsMatchedHighlightRender, setNeedsMatchedHighlightRender] = useState(0);
@@ -404,7 +417,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       if (!inner) return;
       
       // Preserve existing scale from match highlight, or reset from previous hover scale
-      const baseTransform = (element.style.transform || '').replace(/ scale\(1\.1\)/, '').trim(); // Remove only hover scale
+      const baseTransform = (element.style.transform || '').replace(/ scale\\(1\\.1\\)/, '').trim(); // Remove only hover scale
       const isMatched = hotelId === matchedHotelId;
 
       if (hoveredHotelId === hotelId) {
@@ -415,7 +428,12 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       } else if (hoveredHotelId !== null) { // Something else is hovered
         if (!isMatched) element.style.transform = baseTransform; // Reset hover scale if not matched
         element.style.zIndex = isMatched ? '100' : '1'; // Keep matched on top, others default
-        inner.style.opacity = isMatched ? '1' : '0.65'; // Matched remains opaque, others dim
+        // Apply dimming only on desktop
+        if (!isMobile) {
+          inner.style.opacity = isMatched ? '1' : '0.65';
+        } else {
+          inner.style.opacity = '1'; // Always opaque on mobile if not the active hover
+        }
         if (!isMatched) inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.15)'; // Reset non-matched shadow
       } else { // Nothing hovered
         if (!isMatched) element.style.transform = baseTransform; // Reset hover scale if not matched
@@ -425,7 +443,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hoveredHotelId, matchedHotelId, hotels]); // hotels ensures re-eval if markers change
+  }, [hoveredHotelId, matchedHotelId, hotels, isMobile]); // Added isMobile to dependencies
 
   return (
     <div ref={mapContainer} style={{ width: '100%', height: '100%' }} className="mapbox-map" />

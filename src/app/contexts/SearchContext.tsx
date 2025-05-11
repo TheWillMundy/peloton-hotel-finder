@@ -7,6 +7,7 @@ export const ZOOM_LEVELS = {
   CITY: 13,
   DISTRICT: 14.5,
   HOTEL: 16.5,
+  NO_MATCH_CITY_OVERVIEW: 13, // New zoom level, same as city for now
 };
 import { calculateDistance } from '@/lib/utils';
 

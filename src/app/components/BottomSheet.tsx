@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/HotelCard';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,10 @@ const MIN_DRAG_THRESHOLD_PX = HANDLE_AREA_HEIGHT_PX; // Smallest height the shee
 
 export type BottomSheetState = 'closed' | 'peek' | 'full';
 
+export interface BottomSheetHandle { // Renamed from BottomSheetActions to BottomSheetHandle for clarity
+  snapToState: (state: BottomSheetState) => void;
+}
+
 interface BottomSheetProps {
   hotels: ClientHotel[];
   initialState?: BottomSheetState; // Parent can suggest initial state
@@ -21,14 +25,17 @@ interface BottomSheetProps {
   hoveredHotelId?: number | null;
 }
 
-const BottomSheet: React.FC<BottomSheetProps> = ({
-  hotels,
-  initialState = 'closed',
-  onStateChange,
-  onHotelSelect,
-  onHotelHover,
-  hoveredHotelId = null,
-}) => {
+const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
+  {
+    hotels,
+    initialState = 'closed',
+    onStateChange,
+    onHotelSelect,
+    onHotelHover,
+    hoveredHotelId = null,
+  }, 
+  ref
+) => {
   const [sheetState, setSheetState] = useState<BottomSheetState>(initialState);
   const [currentHeight, setCurrentHeight] = useState(0); // Store height in px for smoother drag
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -157,6 +164,20 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     }
   }, [sheetState, getTargetHeightPx]);
 
+  // Expose snapToState method via ref
+  useImperativeHandle(ref, () => ({
+    snapToState: (targetState: BottomSheetState) => {
+      if (!isDragging.current) { // Prevent programmatic snap if user is actively dragging
+        const newHeightPx = getTargetHeightPx(targetState);
+        setCurrentHeight(newHeightPx);
+        setSheetState(targetState);
+        if (onStateChange) {
+          onStateChange(targetState, newHeightPx);
+        }
+      }
+    }
+  }));
+
   return (
     <div
       ref={sheetRef}
@@ -206,6 +227,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       </div>
     </div>
   );
-};
+});
+
+BottomSheet.displayName = 'BottomSheet';
 
 export default BottomSheet; 
