@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState, useMemo } from 'react';
 import { SearchBox } from '@mapbox/search-js-react';
+import { useMapboxSession } from '@/lib/hooks/useMapboxSession';
 // Attempting to use the types as documented or inferring them based on usage.
 
 export interface MapboxGeocodingFeature {
@@ -30,7 +31,8 @@ export default function MapboxSearchInput({
   initialValue = '',
 }: MapboxSearchInputProps) {
   const [value, setValue] = useState(initialValue);
-  const sessionTokenRef = useRef<string>(crypto.randomUUID());
+  // Use our custom hook to get a session token that persists in localStorage
+  const sessionToken = useMapboxSession();
 
   const handleRetrieve = useCallback(
     (response: any) => {
@@ -70,24 +72,24 @@ export default function MapboxSearchInput({
   // Define options with types that should align with SearchBox expectations
   // The 'types' prop expects a string (comma-separated) or Set.
   // The 'categories' prop expects an array of strings.
-  const searchOptions = {
+  const searchOptions = useMemo(() => ({
     language: 'en' as const, // Use 'as const' for literal types
     types: 'place,poi' as string, // Comma-separated string for types
     // types: 'place,poi' as string, // Comma-separated string for types
     categories: ['lodging', 'place.city'], // TODO: We may need to add more categories here for countries other than the US
-    poi_category: ['lodging'],
+    poi_category: 'lodging',
     // categories: ['lodging', 'place.city', 'place.region', 'place.country', 'place.postcode', 'place.district', 'place.locality', 'place.neighborhood'],
     limit: 3,
     bbox: [-125.0, 24.0, -66.5, 49.5] as [number,number,number,number], // Continental US, ensure type // TODO: We may need to add more bbox here for countries other than the US
     debounceEvents: 300,
-  };
+    ...(sessionToken && { session_token: sessionToken }), // Only add session_token when it's available
+  }), [sessionToken]);
 
   return (
     <div className={`mapbox-search-input-container relative ${className || ''}`}>
       {/* @ts-expect-error // Temporarily ignore JSX component type error, as per linter suggestion */}
       <SearchBox
         accessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || ''}
-        sessionToken={sessionTokenRef.current}
         value={value}
         onChange={(text) => setValue(text)}
         onRetrieve={handleRetrieve} // The type of handleRetrieve should be compatible now
