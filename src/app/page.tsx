@@ -397,7 +397,7 @@ function HotelSearchPageContent() {
       // Desktop behavior: open modal
       setSelectedHotelForModal(hotel);
     }
-  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState, ZOOM_LEVELS]);
+  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState]);
 
   useEffect(() => {
     if (mapRef.current && mapReady && !initialPaddingSet) {
