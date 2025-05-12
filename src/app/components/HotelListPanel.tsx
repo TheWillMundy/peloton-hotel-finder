@@ -2,15 +2,15 @@
 
 import HotelCard from '@/app/components/HotelCard';
 import type { ClientHotel } from '@/lib/pelotonAPI';
+import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 
 // Renaming SearchPanelPlaceholder to HotelListPanel for clarity
-const HotelListPanel = ({ onHotelHover, onHotelSelect, hotels, hoveredHotelId, isMobile = false }: { 
-  onHotelHover: (id: number | null) => void;
+const HotelListPanel = ({ onHotelSelect, hotels, isMobile = false }: { 
   onHotelSelect: (hotel: ClientHotel) => void;
   hotels: ClientHotel[];
-  hoveredHotelId: number | null;
   isMobile?: boolean;
 }) => {
+  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
   if (hotels.length === 0) {
     return (
         <div className="p-4 text-center text-gray-500">
@@ -25,10 +25,10 @@ const HotelListPanel = ({ onHotelHover, onHotelSelect, hotels, hoveredHotelId, i
         <HotelCard 
           key={hotel.id} 
           hotel={hotel} 
-          onHover={onHotelHover} 
+          onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
           onClick={() => onHotelSelect(hotel)}
-          isHovered={hotel.id === hoveredHotelId}
-          isAnyHovered={hoveredHotelId !== null}
+          isHovered={hotel.id === uiState.activeHotelId}
+          isAnyHovered={uiState.activeHotelId !== null}
           isMobile={isMobile}
         />
       ))}

@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelResultCard from './HotelResultCard';
 import { Button } from '@/app/components/ui/button';
+import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 
 interface ListViewProps {
   hotels: ClientHotel[];
@@ -13,6 +14,7 @@ interface ListViewProps {
 
 export default function ListView({ hotels, isLoading, onHotelSelect }: ListViewProps) {
   const [visibleItemsCount, setVisibleItemsCount] = useState(10);
+  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
   
   const displayedHotels = useMemo(() => {
     return hotels.slice(0, visibleItemsCount);
@@ -52,6 +54,9 @@ export default function ListView({ hotels, isLoading, onHotelSelect }: ListViewP
             key={hotel.id} 
             hotel={hotel} 
             onClick={onHotelSelect}
+            isActive={hotel.id === uiState.activeHotelId}
+            onMouseEnter={() => setActiveHotel(hotel.id, 'sidebar_hover')}
+            onMouseLeave={() => clearActiveHotel()}
           />
         ))}
         

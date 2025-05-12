@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, f
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/HotelCard';
 import { cn } from '@/lib/utils';
+import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 
 const PEEK_HEIGHT_VH = 25; // 25vh for peek state
 const FULL_HEIGHT_VH = 85; // 85vh for full state
@@ -21,8 +22,6 @@ interface BottomSheetProps {
   initialState?: BottomSheetState; // Parent can suggest initial state
   onStateChange?: (newState: BottomSheetState, currentHeightPx: number) => void;
   onHotelSelect: (hotel: ClientHotel) => void;
-  onHotelHover?: (hotelId: number | null) => void;
-  hoveredHotelId?: number | null;
 }
 
 const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
@@ -31,11 +30,10 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
     initialState = 'closed',
     onStateChange,
     onHotelSelect,
-    onHotelHover,
-    hoveredHotelId = null,
   }, 
   ref
 ) => {
+  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
   const [sheetState, setSheetState] = useState<BottomSheetState>(initialState);
   const [currentHeight, setCurrentHeight] = useState(0); // Store height in px for smoother drag
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -211,9 +209,9 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
                 key={hotel.id}
                 hotel={hotel}
                 onClick={() => onHotelSelect(hotel)}
-                onHover={onHotelHover ? () => onHotelHover(hotel.id) : undefined}
-                isHovered={hotel.id === hoveredHotelId}
-                isAnyHovered={hoveredHotelId !== null}
+                onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
+                isHovered={hotel.id === uiState.activeHotelId}
+                isAnyHovered={uiState.activeHotelId !== null}
                 isMobile={true}
               />
             ))}

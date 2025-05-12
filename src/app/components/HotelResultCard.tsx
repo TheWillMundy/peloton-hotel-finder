@@ -8,9 +8,12 @@ import { cn } from '@/lib/utils';
 interface HotelResultCardProps {
   hotel: ClientHotel;
   onClick?: (hotel: ClientHotel) => void;
+  isActive?: boolean;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
-export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps) {
+export default function HotelResultCard({ hotel, onClick, isActive = false, onMouseEnter, onMouseLeave }: HotelResultCardProps) {
   const handleClick = () => {
     if (onClick) onClick(hotel);
   };
@@ -41,8 +44,13 @@ export default function HotelResultCard({ hotel, onClick }: HotelResultCardProps
 
   return (
     <div 
-      className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer"
+      className={cn(
+        "bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer",
+        isActive && "ring-2 ring-blue-400 border-blue-400 bg-blue-50/50 z-10"
+      )}
       onClick={handleClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div className="flex items-start gap-4">
         {/* Bike Count Circle - moved to left */}

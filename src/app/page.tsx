@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
 import HotelListPanel from '@/app/components/HotelListPanel';
 import type { BottomSheetHandle } from '@/app/components/BottomSheet';
+import { UIInteractionProvider, useUIInteraction } from '@/app/contexts/UIInteractionContext';
 
 // Dynamically import MapboxSearchInput with SSR turned off
 const DynamicMapboxSearchInput = dynamic(
@@ -36,6 +37,19 @@ const MOBILE_BREAKPOINT = 768;
 const DESKTOP_SIDEBAR_WIDTH = 420;
 const MOBILE_SEARCH_BAR_HEIGHT = 60; // Approximate height for the search bar on mobile
 
+// New Interface for unified map focus state management
+interface MapFocusState {
+  type: 'idle' | 'city_overview' | 'match_found' | 'poi_no_match' | 'hover_focus';
+  centerCoordinates: [number, number]; // lng, lat
+  zoomLevel: number;
+  focusedHotelId?: number | null; // For 'match_found' and 'hover_focus'
+  searchTermDisplay?: string | null; // For 'poi_no_match' (name of the POI searched)
+}
+
+// Default coordinates centered on US (fallback if no location is available)
+const DEFAULT_CENTER: [number, number] = [-98.5795, 39.8283]; // Center of US
+const DEFAULT_ZOOM = ZOOM_LEVELS.COUNTRY;
+
 // Define the API response structure (consistent with api/hotels/route.ts)
 interface HotelsApiResponse {
   hotels: ClientHotel[];
@@ -48,8 +62,6 @@ interface HotelsApiResponse {
 
 function HotelSearchPageContent() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
-  const [hoveredHotelId, setHoveredHotelId] = useState<number | null>(null);
-  const isHoverFromMap = useRef(false); // Changed from useState to useRef
   const [mapReady, setMapReady] = useState(false);
   const [initialPaddingSet, setInitialPaddingSet] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -69,17 +81,20 @@ function HotelSearchPageContent() {
   // Selected hotel for the modal (distinct from selectedHotelNameForQuery in intent)
   const [selectedHotelForModal, setSelectedHotelForModal] = useState<ClientHotel | null>(null);
 
-  // New state for no-match hotel searches
-  const [noMatchSearchDetails, setNoMatchSearchDetails] = useState<{ lat: number; lng: number; searchTerm: string } | null>(null);
+  // New consolidated mapFocusState to replace several separate state variables
+  const [mapFocusState, setMapFocusState] = useState<MapFocusState>({
+    type: 'idle',
+    centerCoordinates: DEFAULT_CENTER,
+    zoomLevel: DEFAULT_ZOOM
+  });
 
   const mapRef = useRef<MapboxMapType | null>(null);
-  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
   const [currentBottomSheetState, setCurrentBottomSheetState] = useState<BottomSheetState>('closed');
   const bottomSheetRef = useRef<BottomSheetHandle | null>(null);
 
-  const cityCenterForMapPan = useRef<[number, number] | undefined>(undefined); // To store city center for no-match pan
+  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
@@ -164,60 +179,61 @@ function HotelSearchPageContent() {
   const hotelsFromApi = useMemo(() => apiResponse?.hotels || [], [apiResponse]);
   const matchedHotelFromApi = useMemo(() => apiResponse?.matchedHotel, [apiResponse]);
 
-  // Handle successful API response: update apiProvidedCityBbox for potential reuse
+  // Handle successful API response: update apiProvidedCityBbox and mapFocusState
   useEffect(() => {
     if (isFetchSuccess && apiResponse) {
       if (apiResponse.cityBbox) {
         setApiProvidedCityBbox(apiResponse.cityBbox);
       }
-      if (apiResponse.cityCenter) {
-        cityCenterForMapPan.current = apiResponse.cityCenter;
-      }
 
+      // Update mapFocusState based on API response
       if (currentIntent.searchType === 'hotel') {
         if (apiResponse.matchedHotel && apiResponse.matchedHotel.id) {
-          // Hotel Match Found
-          setNoMatchSearchDetails(null); 
-          isHoverFromMap.current = true; 
-          setHoveredHotelId(apiResponse.matchedHotel.id);
-          if (isMobile && bottomSheetRef.current && currentBottomSheetState === 'closed') {
-            bottomSheetRef.current.snapToState('peek'); 
-          }
-        } else if (apiResponse.searchedPoinLocation) {
-          // POI Searched, No Peloton Match Found (new searchedPoinLocation field is present)
-          setNoMatchSearchDetails({
-            lat: apiResponse.searchedPoinLocation.lat,
-            lng: apiResponse.searchedPoinLocation.lng,
-            searchTerm: apiResponse.searchedPoinLocation.name
+          // Hotel Match Found - update mapFocusState to focus on matched hotel
+          setMapFocusState({
+            type: 'match_found',
+            centerCoordinates: [apiResponse.matchedHotel.lng, apiResponse.matchedHotel.lat],
+            zoomLevel: ZOOM_LEVELS.HOTEL,
+            focusedHotelId: apiResponse.matchedHotel.id
           });
-          toast.error(`No Peloton found at "${apiResponse.searchedPoinLocation.name}". Showing nearby options.`);
-          setHoveredHotelId(null); 
-          setSelectedHotelForModal(null); 
+          setActiveHotel(apiResponse.matchedHotel.id, 'initial_match');
+        } else if (apiResponse.searchedPoinLocation) {
+          // POI Searched, No Peloton Match Found - update mapFocusState for "no match" display
+          setMapFocusState({
+            type: 'poi_no_match',
+            centerCoordinates: [apiResponse.searchedPoinLocation.lng, apiResponse.searchedPoinLocation.lat],
+            zoomLevel: ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
+            searchTermDisplay: apiResponse.searchedPoinLocation.name
+          });
+          clearActiveHotel();
         } else {
           // No Hotel Match Found for a specific hotel search, and no specific POI info returned by API
-          // This case might occur if backend couldn't even identify the POI from freeText (less likely with client geocoding)
-          // Or if it's an older cached response without searchedPoinLocation
           if (currentIntent.location && currentIntent.searchTerm) {
-            setNoMatchSearchDetails({ 
-              lat: currentIntent.location.lat, 
-              lng: currentIntent.location.lng, 
-              searchTerm: currentIntent.searchTerm 
+            setMapFocusState({
+              type: 'poi_no_match',
+              centerCoordinates: [currentIntent.location.lng, currentIntent.location.lat],
+              zoomLevel: ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
+              searchTermDisplay: currentIntent.searchTerm
             });
-            toast.error(`Peloton not confirmed at "${currentIntent.searchTerm}". Showing nearby options.`);
-            setHoveredHotelId(null); 
-            setSelectedHotelForModal(null); 
+            clearActiveHotel();
           }
         }
       } else {
         // City Search (not a specific hotel search)
-        setNoMatchSearchDetails(null); // Clear no-match state on city searches
+        // Update mapFocusState to show city overview
+        setMapFocusState({
+          type: 'city_overview',
+          centerCoordinates: apiResponse.cityCenter || DEFAULT_CENTER,
+          zoomLevel: ZOOM_LEVELS.CITY
+        });
+        clearActiveHotel();
       }
 
     } else if (isFetchError && fetchError) {
       console.error("Failed to fetch hotels:", fetchError.message);
       // hotelsFromApi will be an empty array due to its memoized default.
     }
-  }, [isFetchSuccess, apiResponse, isFetchError, fetchError, currentIntent.searchType, currentIntent.location, currentIntent.searchTerm, isMobile, currentBottomSheetState]);
+  }, [isFetchSuccess, apiResponse, isFetchError, fetchError, currentIntent.searchType, currentIntent.location, currentIntent.searchTerm, isMobile, currentBottomSheetState, setActiveHotel, clearActiveHotel]);
 
   // Reset states when the core search location in the intent changes significantly
   useEffect(() => {
@@ -225,8 +241,16 @@ function HotelSearchPageContent() {
         setApiProvidedCityBbox(null); // Clear any bbox from a previous city
         setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] });
         setShowFilters(false);
-        setHoveredHotelId(null);
         setSelectedHotelForModal(null); // Clear modal for any new search
+        
+        // Reset map focus to idle (will be updated once API response comes in)
+        setMapFocusState({
+          type: 'idle',
+          centerCoordinates: currentIntent.location ? 
+            [currentIntent.location.lng, currentIntent.location.lat] : 
+            DEFAULT_CENTER,
+          zoomLevel: DEFAULT_ZOOM
+        });
     }
     // When a new location is set (even if not "fresh"), always clear the modal
     // to avoid showing details from a previous search context.
@@ -295,23 +319,28 @@ function HotelSearchPageContent() {
     return filtered;
   }, [hotelsFromApi, activeFilters, currentIntent.searchType, matchedHotelFromApi]);
 
-  const handleHotelHover = useCallback((id: number | null) => {
-    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
-    hoverTimeoutRef.current = setTimeout(() => {
-      setHoveredHotelId(id);
-      isHoverFromMap.current = false;
-    }, 75);
-  }, []);
-
-  const handleMapMarkerHover = useCallback((id: number | null) => {
-    if (isMobile && id === null) return;
-    setHoveredHotelId(id);
-    isHoverFromMap.current = true;
-    if (isMobile && id !== null) {
-      if (!isPanelOpen) setIsPanelOpen(true);
-      if (currentBottomSheetState === 'closed') setCurrentBottomSheetState('peek');
+  // Unified hover processing for both map and sidebar
+  const processHotelHover = useCallback((id: number | null, source: 'sidebar' | 'map', coords?: { lng: number; lat: number }) => {
+    if (id !== null) {
+      setActiveHotel(id, source === 'map' ? 'map_hover' : 'sidebar_hover');
+      if (source === 'sidebar' && coords) {
+        setMapFocusState(prev => ({
+          ...prev,
+          type: 'hover_focus',
+          focusedHotelId: id,
+          centerCoordinates: [coords.lng, coords.lat],
+          zoomLevel: prev.zoomLevel
+        }));
+      }
+    } else {
+      clearActiveHotel();
     }
-  }, [isMobile, isPanelOpen, currentBottomSheetState]);
+  }, [setActiveHotel, clearActiveHotel]);
+
+  const handleMapMarkerHover = useCallback((id: number | null, hotelCoords?: { lng: number; lat: number }) => {
+    if (isMobile && id === null) return;
+    processHotelHover(id, 'map', hotelCoords);
+  }, [isMobile, processHotelHover]);
 
   const handleMapLoad = useCallback(() => setMapReady(true), []);
   const handleCloseModal = useCallback(() => setSelectedHotelForModal(null), []);
@@ -328,11 +357,9 @@ function HotelSearchPageContent() {
           featureType: 'poi',
           category: '',
         });
-        setHoveredHotelId(hotel.id);
-        setSelectedHotelForModal(null);
         bottomSheetRef.current?.snapToState('peek');
       } else { // source === 'map' (Tap on map marker)
-        if (hotel.id === hoveredHotelId || hotel.id === matchedHotelFromApi?.id) { // Tapped the currently focused/selected or API matched hotel marker
+        if (hotel.id === uiState.activeHotelId) { // Tapped the currently focused/selected or API matched hotel marker
           setSelectedHotelForModal(hotel);
           bottomSheetRef.current?.snapToState('closed'); // Close sheet to give modal focus
         } else { // Tapped a *different* marker on the map
@@ -345,8 +372,6 @@ function HotelSearchPageContent() {
             featureType: 'poi',
             category: '',
           });
-          setHoveredHotelId(hotel.id);
-          setSelectedHotelForModal(null);
           bottomSheetRef.current?.snapToState('peek');
         }
       }
@@ -354,7 +379,7 @@ function HotelSearchPageContent() {
       // Desktop behavior: open modal
       setSelectedHotelForModal(hotel);
     }
-  }, [isMobile, handleLocationRetrieved, bottomSheetRef, hoveredHotelId, matchedHotelFromApi]); 
+  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId]); 
 
   useEffect(() => {
     if (mapRef.current && mapReady && !initialPaddingSet) {
@@ -411,19 +436,44 @@ function HotelSearchPageContent() {
     if ((newState === 'peek' || newState === 'full') && !isPanelOpen ) setIsPanelOpen(true);
   }, [mapReady, isMobile, isPanelOpen]);
 
+  // Effect to handle map centering on sidebar hover
   useEffect(() => {
-    if (hoveredHotelId === null || !isHoverFromMap.current) return;
-    const scrollDelay = isMobile ? 300 : 50;
-    setTimeout(() => {
-      const hotelCard = document.querySelector(`[data-hotel-id="${hoveredHotelId}"]`);
-      if (!hotelCard) return;
-      const scrollContainer = isMobile 
-        ? document.querySelector('.bottom-sheet-content')
-        : document.querySelector('.overflow-y-auto');
-      if (!scrollContainer) return;
-      hotelCard.scrollIntoView({ behavior: 'smooth', block: isMobile ? 'start' : 'center' });
-    }, scrollDelay);
-  }, [hoveredHotelId, isMobile, isHoverFromMap]);
+    if (uiState.interactionSource === 'sidebar_hover' && uiState.activeHotelId !== null) {
+      const activeHotel = displayedHotels.find(h => h.id === uiState.activeHotelId);
+      if (activeHotel) {
+        setMapFocusState(prev => ({
+          ...prev,
+          type: 'hover_focus', // Can use 'hover_focus' or a more specific type if needed
+          centerCoordinates: [activeHotel.lng, activeHotel.lat],
+          // Optionally adjust zoom, or keep previous zoom:
+          // zoom: ZOOM_LEVELS.HOTEL, 
+          focusedHotelId: activeHotel.id
+        }));
+      }
+    }
+    // If interactionSource is no longer sidebar_hover, or activeHotelId is null,
+    // we don't necessarily revert the map focus here, as other interactions might take precedence
+    // or the user might have manually panned.
+    // The map will naturally update based on subsequent searches or explicit map interactions.
+  }, [uiState.activeHotelId, uiState.interactionSource, displayedHotels, setMapFocusState]);
+
+  // Scroll-to-view logic - ensure this only runs for map_hover or initial_match to avoid conflicts
+  useEffect(() => {
+    if (uiState.activeHotelId === null) return;
+    // Only scroll if interaction came from map or was an initial match to prevent scroll fights with sidebar hover
+    if (uiState.interactionSource === 'map_hover' || uiState.interactionSource === 'initial_match') {
+        const scrollDelay = isMobile ? 300 : 50;
+        setTimeout(() => {
+          const hotelCard = document.querySelector(`[data-hotel-id="${uiState.activeHotelId}"]`);
+          if (!hotelCard) return;
+          const scrollContainer = isMobile 
+            ? document.querySelector('.bottom-sheet-content')
+            : document.querySelector('.overflow-y-auto');
+          if (!scrollContainer) return;
+          hotelCard.scrollIntoView({ behavior: 'smooth', block: isMobile ? 'start' : 'center' });
+        }, scrollDelay);
+    }
+  }, [uiState.activeHotelId, uiState.interactionSource, isMobile]); // Added interactionSource
 
   const handleViewChange = (newView: ViewMode) => {
     setViewMode(newView);
@@ -444,29 +494,6 @@ function HotelSearchPageContent() {
   );
   
   const currentCityNameForSearch = currentIntent.rawMapboxFeature?.placeName || currentIntent.searchTerm || '';
-
-  // Effect to update searchLocation for MapboxMap when a hotel is matched
-  // This ensures the map centers on the matched hotel, not the original geocoded POI location if different.
-  const mapSearchLocation = useMemo(() => {
-    if (currentIntent.searchType === 'hotel' && matchedHotelFromApi) {
-      return { lat: matchedHotelFromApi.lat, lng: matchedHotelFromApi.lng };
-    }
-    // If a POI was searched but not matched, center on that POI's location
-    if (noMatchSearchDetails) { 
-      return { lat: noMatchSearchDetails.lat, lng: noMatchSearchDetails.lng };
-    }
-    return currentIntent.location; 
-  }, [currentIntent.location, currentIntent.searchType, matchedHotelFromApi, noMatchSearchDetails]);
-
-  const mapZoomLevel = useMemo(() => {
-    if (noMatchSearchDetails) {
-      return ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW;
-    }
-    if (currentIntent.searchType === 'hotel') {
-      return ZOOM_LEVELS.HOTEL;
-    }
-    return ZOOM_LEVELS.CITY; // Default to city zoom if not a hotel search or noMatch
-  }, [currentIntent.searchType, noMatchSearchDetails]);
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-gray-100">
@@ -519,10 +546,8 @@ function HotelSearchPageContent() {
             ) : (
               <HotelListPanel 
                 hotels={displayedHotels}
-                onHotelHover={handleHotelHover} 
                 onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
-                hoveredHotelId={hoveredHotelId} 
-                isMobile={isMobile} 
+                isMobile={isMobile}
               />
             )}
           </div>
@@ -556,8 +581,6 @@ function HotelSearchPageContent() {
           initialState={initialSheetStateForMobile}
           onStateChange={handleBottomSheetStateChange}
           onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
-          onHotelHover={handleHotelHover}
-          hoveredHotelId={hoveredHotelId}
         />
       )}
 
@@ -569,17 +592,18 @@ function HotelSearchPageContent() {
         <MapboxMap 
           hotels={displayedHotels}
           mapRef={mapRef} 
-          hoveredHotelId={hoveredHotelId}
           onMarkerClick={(hotel) => handleHotelSelect(hotel, 'map')}
           onMapLoad={handleMapLoad}
           isMobile={isMobile}
           onMarkerHover={handleMapMarkerHover}
           mapReady={mapReady}
-          searchLocation={mapSearchLocation} // Use derived mapSearchLocation
-          isHotelSearchIntent={currentIntent.searchType === 'hotel'}
-          matchedHotelId={matchedHotelFromApi?.id} 
-          noMatchSearchLocation={noMatchSearchDetails} // Pass noMatchSearchDetails to MapboxMap
-          mapTargetZoom={mapZoomLevel} // Pass explicit zoom level
+          mapFocusProps={{
+            center: mapFocusState.centerCoordinates,
+            zoom: mapFocusState.zoomLevel,
+            highlightType: mapFocusState.type,
+            highlightHotelId: uiState.activeHotelId,
+            noMatchSearchTerm: mapFocusState.searchTermDisplay
+          }}
         />
       </div>
 
@@ -636,10 +660,12 @@ function HotelSearchPageContent() {
 
 export default function HotelSearchPage() {
   return (
-    <ViewModeProvider>
-      <SearchProvider>
-        <HotelSearchPageContent />
-      </SearchProvider>
-    </ViewModeProvider>
+    <UIInteractionProvider>
+      <ViewModeProvider>
+        <SearchProvider>
+          <HotelSearchPageContent />
+        </SearchProvider>
+      </ViewModeProvider>
+    </UIInteractionProvider>
   );
 }

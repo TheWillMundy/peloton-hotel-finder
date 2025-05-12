@@ -4,10 +4,11 @@ import type { MapboxGeocodingFeature } from '@/app/components/CitySearchInput';
 // Assuming ZOOM_LEVELS is still relevant or defined elsewhere, e.g., a new constants file or locally if only used here
 // For now, let's define it here if not imported
 export const ZOOM_LEVELS = {
-  CITY: 13,
-  DISTRICT: 14.5,
-  HOTEL: 16.5,
+  CITY: 12.5,
+  DISTRICT: 14,
+  HOTEL: 16,
   NO_MATCH_CITY_OVERVIEW: 13, // New zoom level, same as city for now
+  COUNTRY: 4.5 // Adding default country-level zoom
 };
 import { calculateDistance } from '@/lib/utils';
 
