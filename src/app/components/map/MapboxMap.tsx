@@ -6,9 +6,9 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import { useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
-import HotelMarker from './HotelMarker';
-import SearchResultMarker from './SearchResultMarker';
-import MapboxCustomStyles from './MapStyles';
+import HotelMarker from '@/app/components/map/HotelMarker';
+import SearchResultMarker from '@/app/components/map/SearchResultMarker';
+import MapboxCustomStyles from '@/app/components/map/MapStyles';
 
 // Interface for the consolidated map focus props
 interface MapFocusProps {

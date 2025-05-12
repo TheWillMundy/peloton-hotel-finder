@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
-import HotelCard from '@/app/components/HotelCard';
+import HotelCard from '@/app/components/hotel/HotelCard';
 import { cn } from '@/lib/utils';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 

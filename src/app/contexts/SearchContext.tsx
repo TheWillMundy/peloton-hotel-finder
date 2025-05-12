@@ -1,6 +1,9 @@
+"use client";
+
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 // import type { ClientHotel } from '@/lib/pelotonAPI'; // Keep if selectedHotelForQuery needs full type
-import type { MapboxGeocodingFeature } from '@/app/components/CitySearchInput';
+import type { MapboxGeocodingFeature } from '@/app/components/search/CitySearchInput';
+
 // Assuming ZOOM_LEVELS is still relevant or defined elsewhere, e.g., a new constants file or locally if only used here
 // For now, let's define it here if not imported
 export const ZOOM_LEVELS = {

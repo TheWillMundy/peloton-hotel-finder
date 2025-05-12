@@ -1,29 +1,43 @@
 "use client";
 
+// React and Next.js imports
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import dynamic from 'next/dynamic';
+
+// Third-party library imports
 import { ChevronLeft } from 'lucide-react';
-import { Button } from '@/app/components/ui/button';
-import { cn, cubicBezier } from '@/lib/utils';
-import MapboxMap from '@/app/components/MapboxMap';
 import type { Map as MapboxMapType } from 'mapbox-gl';
 import { useQuery } from '@tanstack/react-query';
-import { ClientHotel } from '@/lib/pelotonAPI';
-import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
-import HotelDetailModal from '@/app/components/HotelDetailModal';
-import BottomSheet, { BottomSheetState } from '@/app/components/BottomSheet';
-import { Filters } from '@/app/components/FilterChips';
-import dynamic from 'next/dynamic';
-import HotelListPanel from '@/app/components/HotelListPanel';
-import type { BottomSheetHandle } from '@/app/components/BottomSheet';
-import { UIInteractionProvider, useUIInteraction } from '@/app/contexts/UIInteractionContext';
-import FilterPanel from '@/app/components/FilterPanel';
-import FilterModal from '@/app/components/FilterModal';
 
-// Dynamically import MapboxSearchInput with SSR turned off
-const DynamicMapboxSearchInput = dynamic(
-  () => import('@/app/components/CitySearchInput'),
-  { ssr: false, loading: () => <p className="p-3 rounded-xl shadow-xl w-full bg-gray-200 animate-pulse">Loading Search...</p> }
-);
+// Context imports
+import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
+import { UIInteractionProvider, useUIInteraction } from '@/app/contexts/UIInteractionContext';
+
+// UI component imports
+import { Button } from '@/app/components/ui/button';
+import BottomSheet from '@/app/components/ui/BottomSheet';
+import type { BottomSheetHandle, BottomSheetState } from '@/app/components/ui/BottomSheet';
+
+// Map component imports
+import MapboxMap from '@/app/components/map/MapboxMap';
+
+// Hotel component imports
+import HotelDetailModal from '@/app/components/hotel/HotelDetailModal';
+import HotelListPanel from '@/app/components/hotel/HotelListPanel';
+
+// Filter component imports
+import FilterPanel from '@/app/components/filter/FilterPanel';
+import FilterModal from '@/app/components/filter/FilterModal';
+import type { Filters } from '@/app/components/filter/FilterChips';
+
+// Type imports
+import type { ClientHotel } from '@/lib/pelotonAPI';
+
+// Utility imports
+import { cn, cubicBezier } from '@/lib/utils';
+
+// Dynamically imported components
+const CitySearchInput = dynamic(() => import('@/app/components/search/CitySearchInput'), { ssr: false });
 
 // Define primary loyalty programs, could also be imported from FilterChips if kept there
 const PRIMARY_LOYALTY_PROGRAMS = [
@@ -479,7 +493,7 @@ function HotelSearchPageContent() {
         <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 pointer-events-none">
           <div className="w-full max-w-md pointer-events-auto flex items-center gap-2">
             <div className="flex-1">
-              <DynamicMapboxSearchInput
+              <CitySearchInput
                 onLocationRetrieved={handleLocationRetrieved} // Directly from useSearch()
                 onNoResultsFound={() => {}}
                 isLoading={isLoadingHotels} 
@@ -511,7 +525,7 @@ function HotelSearchPageContent() {
             "p-6 flex items-center space-x-2",
             isPanelOpen && 'pr-14' 
           )}>
-            <DynamicMapboxSearchInput
+            <CitySearchInput
               onLocationRetrieved={handleLocationRetrieved}
               onNoResultsFound={() => {}}
               isLoading={isLoadingHotels} 

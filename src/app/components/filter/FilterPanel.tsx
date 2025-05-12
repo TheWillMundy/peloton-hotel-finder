@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from 'react';
-import { FilterChips, Filters, loyaltyProgramsList } from './FilterChips';
-import { Button } from './ui/button';
+import { FilterChips, Filters, loyaltyProgramsList } from '@/app/components/filter/FilterChips';
+import { Button } from '@/app/components/ui/button';
 import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 

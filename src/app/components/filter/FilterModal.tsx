@@ -1,8 +1,8 @@
 "use client";
 
 import React from "react";
-import { FilterChips, Filters, loyaltyProgramsList } from "./FilterChips";
-import { Button } from "./ui/button";
+import { FilterChips, Filters, loyaltyProgramsList } from "@/app/components/filter/FilterChips";
+import { Button } from "@/app/components/ui/button";
 import { X } from "lucide-react";
 import { 
   Drawer,
@@ -10,7 +10,7 @@ import {
   DrawerHeader,
   DrawerFooter,
   DrawerTitle
-} from "./ui/drawer";
+} from "@/app/components/ui/drawer";
 
 interface FilterModalProps {
   isOpen: boolean;

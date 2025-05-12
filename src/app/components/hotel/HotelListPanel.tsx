@@ -1,11 +1,11 @@
 "use client";
 
 import React from 'react';
-import HotelCard from '@/app/components/HotelCard';
-import type { ClientHotel } from '@/lib/pelotonAPI';
+import { ClientHotel } from '@/lib/pelotonAPI';
+import HotelCard from '@/app/components/hotel/HotelCard';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
-import FilterPanel from './FilterPanel';
-import { Filters } from './FilterChips';
+import FilterPanel from '@/app/components/filter/FilterPanel';
+import type { Filters } from '@/app/components/filter/FilterChips';
 
 // Renaming SearchPanelPlaceholder to HotelListPanel for clarity
 const HotelListPanel = ({
