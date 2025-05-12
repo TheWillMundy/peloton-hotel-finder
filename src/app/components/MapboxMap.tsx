@@ -84,12 +84,16 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       center: mapCenter,
       zoom: mapZoom,
       essential: true,
-      duration: 1000
+      duration: 1000,
+      // Add padding options for mobile to position markers better
+      ...((isMobile && highlightType === 'hover_focus') ? {
+        padding: { top: 25, bottom: 0, left: 0, right: 0 }
+      } : {})
     });
     
     // Update the last center reference
     lastCenterRef.current = mapCenter;
-  }, [mapCenter, mapZoom, highlightType, mapReady]);
+  }, [mapCenter, mapZoom, highlightType, mapReady, isMobile]);
 
   // Handle zoom changes from context
   useEffect(() => {
@@ -178,22 +182,23 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
         {mapReady && hotels.map(hotel => {
           if (typeof hotel.lng !== 'number' || typeof hotel.lat !== 'number') return null;
 
-          const isDirectlyHovered = uiState.activeHotelId === hotel.id && uiState.interactionSource === 'map_hover';
-          const isMatchedFromSearch = highlightType === 'match_found' && hotel.id === highlightHotelId;
-          // Simplified condition for sidebar activation (don't require !isDirectlyHovered && !isMatchedFromSearch)
-          // This ensures mobile interactions work correctly with the sidebar_hover source
-          const isActiveBySidebar = hotel.id === uiState.activeHotelId && 
-                                   uiState.interactionSource === 'sidebar_hover';
+          // Determine if this marker is the one that the map is specifically focused on due to a search match or hover action.
+          const isExplicitlyFocusedByMapState = (
+              highlightType === 'match_found' || highlightType === 'hover_focus'
+            ) && hotel.id === highlightHotelId;
 
-          // Include the highlightHotelId in the focus check to handle match_found focus on mobile
-          const isFocused = isDirectlyHovered || isMatchedFromSearch || isActiveBySidebar || 
-                           (highlightType === 'match_found' && hotel.id === mapFocusProps.highlightHotelId);
+          // Determine if this marker is active based on UI interaction (map hover or sidebar hover)
+          const isActiveByUIHover = 
+            hotel.id === uiState.activeHotelId && 
+            (uiState.interactionSource === 'map_hover' || uiState.interactionSource === 'sidebar_hover');
 
-          // A marker is dimmed if any other marker is focused
+          const isFocused = isExplicitlyFocusedByMapState || isActiveByUIHover;
+
+          // A marker is dimmed if *any* marker is considered active/focused, but this one isn't.
           const isAnyHotelFocused = 
             uiState.activeHotelId !== null || 
-            (highlightType === 'match_found' && highlightHotelId !== null);
-            
+            ((highlightType === 'match_found' || highlightType === 'hover_focus') && highlightHotelId !== null);
+
           const isDimmed = isAnyHotelFocused && !isFocused;
 
           return (
@@ -231,4 +236,4 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   );
 };
 
-export default React.memo(MapboxMap); 
+export default MapboxMap; 

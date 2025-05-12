@@ -1,25 +1,23 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { ChevronLeft, FilterIcon } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn, cubicBezier } from '@/lib/utils';
 import MapboxMap from '@/app/components/MapboxMap';
 import type { Map as MapboxMapType } from 'mapbox-gl';
 import { useQuery } from '@tanstack/react-query';
-import ListView from '@/app/components/ListView';
-import ViewToggle, { ViewMode } from '@/app/components/ViewToggle';
 import { ClientHotel } from '@/lib/pelotonAPI';
-import { ViewModeProvider, useViewMode } from '@/app/contexts/ViewModeContext';
+import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
 import HotelDetailModal from '@/app/components/HotelDetailModal';
 import BottomSheet, { BottomSheetState } from '@/app/components/BottomSheet';
-import { FilterChips, Filters } from '@/app/components/FilterChips';
+import { Filters } from '@/app/components/FilterChips';
 import dynamic from 'next/dynamic';
-import { toast } from 'sonner';
-import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
 import HotelListPanel from '@/app/components/HotelListPanel';
 import type { BottomSheetHandle } from '@/app/components/BottomSheet';
 import { UIInteractionProvider, useUIInteraction } from '@/app/contexts/UIInteractionContext';
+import FilterPanel from '@/app/components/FilterPanel';
+import FilterModal from '@/app/components/FilterModal';
 
 // Dynamically import MapboxSearchInput with SSR turned off
 const DynamicMapboxSearchInput = dynamic(
@@ -72,7 +70,6 @@ function HotelSearchPageContent() {
     loyaltyPrograms: [],
   });
   
-  const { viewMode, setViewMode } = useViewMode();
   const { searchContextState, handleLocationRetrieved } = useSearch();
   const { currentIntent, needsFreshHotels } = searchContextState;
 
@@ -151,10 +148,6 @@ function HotelSearchPageContent() {
         reusingMapboxBbox: !!(currentIntent.mapboxFeatureBbox && !needsFreshHotels && !apiProvidedCityBbox)
       });
 
-      if (apiProvidedCityBbox && !needsFreshHotels && currentIntent.searchType === 'hotel') {
-        toast.success('Using cached city data for faster results! ⚡');
-      }
-
       const response = await fetch(apiUrl);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: "Unknown error fetching hotels" }));
@@ -173,6 +166,7 @@ function HotelSearchPageContent() {
     },
     enabled: !!currentIntent.location, // Only run query if a location is part of the intent
     retry: 1,
+    placeholderData: (previousData) => previousData, // Keep previous data while loading new
   });
 
   // Extracted data from apiResponse for consumption by UI
@@ -260,42 +254,8 @@ function HotelSearchPageContent() {
 
   }, [currentIntent.location, needsFreshHotels]);
 
-  const filterChipOptions = useMemo(() => {
-    if (!hotelsFromApi) return [...PRIMARY_LOYALTY_PROGRAMS, "Other"];
-    
-    const options = new Set<string>([...PRIMARY_LOYALTY_PROGRAMS]);
-    let hasActualOther = false;
-    hotelsFromApi.forEach(hotel => {
-      if (hotel.loyaltyProgram === "Other") {
-        hasActualOther = true;
-        if (hotel.brand && !PRIMARY_LOYALTY_PROGRAMS.includes(hotel.brand)) {
-          options.add(hotel.brand);
-        }
-      } else if (hotel.loyaltyProgram && !PRIMARY_LOYALTY_PROGRAMS.includes(hotel.loyaltyProgram)){
-        options.add(hotel.loyaltyProgram);
-      }
-    });
-    if (hasActualOther || hotelsFromApi.some(h => h.loyaltyProgram === "Other")) {
-        options.add("Other");
-    }
-    return Array.from(options).sort((a, b) => {
-        if (a === "Other") return 1;
-        if (b === "Other") return -1;
-        return a.localeCompare(b);
-    });
-  }, [hotelsFromApi]);
-
   const displayedHotels = useMemo(() => {
-    const isHotelSearchIntent = currentIntent.searchType === 'hotel';
-    const matchedHotelId = matchedHotelFromApi?.id;
-
-    if (isHotelSearchIntent && matchedHotelId) {
-      const matched = hotelsFromApi.find(h => h.id === matchedHotelId);
-      if (matched) {
-        return [matched, ...hotelsFromApi.filter(h => h.id !== matchedHotelId)];
-      }
-    }
-    
+    // Start with all hotels and apply active filters
     let filtered = [...hotelsFromApi];
     if (activeFilters.loyaltyPrograms.length > 0) {
       filtered = filtered.filter(hotel => {
@@ -309,6 +269,7 @@ function HotelSearchPageContent() {
     if (activeFilters.inRoom) filtered = filtered.filter(hotel => hotel.in_room);
     if (activeFilters.inGym) filtered = filtered.filter(hotel => hotel.in_gym);
 
+    // Sort after filtering
     filtered.sort((a, b) => {
       if (a.in_room !== b.in_room) return a.in_room ? -1 : 1;
       if (a.in_gym !== b.in_gym) return a.in_gym ? -1 : 1;
@@ -316,6 +277,17 @@ function HotelSearchPageContent() {
       if (b.distance_m === null) return -1;
       return a.distance_m - b.distance_m;
     });
+
+    // If a specific hotel search matched, bring the matched hotel to the front of the filtered list
+    const isHotelSearchIntent = currentIntent.searchType === 'hotel';
+    const matchedHotelId = matchedHotelFromApi?.id;
+    if (isHotelSearchIntent && matchedHotelId) {
+      const idx = filtered.findIndex(h => h.id === matchedHotelId);
+      if (idx > -1) {
+        const [matched] = filtered.splice(idx, 1);
+        return [matched, ...filtered];
+      }
+    }
     return filtered;
   }, [hotelsFromApi, activeFilters, currentIntent.searchType, matchedHotelFromApi]);
 
@@ -497,37 +469,28 @@ function HotelSearchPageContent() {
     }
   }, [uiState.activeHotelId, uiState.interactionSource, isMobile]); // Added interactionSource
 
-  const handleViewChange = (newView: ViewMode) => {
-    setViewMode(newView);
-    if (isMobile && newView === 'map' && !isPanelOpen) {
-      setIsPanelOpen(true); 
-      setCurrentBottomSheetState('peek');
-    }
-  };
-
   const initialSheetStateForMobile = isPanelOpen ? 'peek' : 'closed';
 
-  const listViewContent = (
-    <ListView 
-      hotels={displayedHotels} // Uses derived state
-      isLoading={isLoadingHotels} // Uses direct useQuery state
-      onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
-    />
-  );
-  
   const currentCityNameForSearch = currentIntent.rawMapboxFeature?.placeName || currentIntent.searchTerm || '';
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-gray-100">
       {isMobile && (
         <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 pointer-events-none">
-          <div className="w-full max-w-md pointer-events-auto">
-            <DynamicMapboxSearchInput
-              onLocationRetrieved={handleLocationRetrieved} // Directly from useSearch()
-              onNoResultsFound={() => {}}
-              isLoading={isLoadingHotels} 
-              className="bg-white p-3 rounded-xl shadow-xl w-full"
-              initialValue={currentCityNameForSearch} // Use derived city name
+          <div className="w-full max-w-md pointer-events-auto flex items-center gap-2">
+            <div className="flex-1">
+              <DynamicMapboxSearchInput
+                onLocationRetrieved={handleLocationRetrieved} // Directly from useSearch()
+                onNoResultsFound={() => {}}
+                isLoading={isLoadingHotels} 
+                className="bg-white p-3 rounded-xl shadow-xl w-full"
+                initialValue={currentCityNameForSearch} // Use derived city name
+              />
+            </div>
+            <FilterPanel
+              isMobile
+              activeFilters={activeFilters}
+              onFiltersChange={() => setShowFilters(true)}
             />
           </div>
         </div>
@@ -540,15 +503,13 @@ function HotelSearchPageContent() {
             "shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
             "transition-all duration-700 ease-in-out",
             "flex flex-col",
-            viewMode === "list" 
-              ? "inset-4 rounded-xl"
-              : `left-4 top-4 bottom-4 w-1/3 rounded-3xl`,
-            viewMode === 'map' && !isPanelOpen && "-translate-x-full"
+            "left-4 top-4 bottom-4 w-1/3 rounded-3xl",
+            !isPanelOpen && "-translate-x-full"
           )}
         >
           <div className={cn(
             "p-6 flex items-center space-x-2",
-            viewMode === 'map' && isPanelOpen && 'pr-14' 
+            isPanelOpen && 'pr-14' 
           )}>
             <DynamicMapboxSearchInput
               onLocationRetrieved={handleLocationRetrieved}
@@ -559,40 +520,33 @@ function HotelSearchPageContent() {
             />
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-2">
-            {viewMode === "list" ? (
-              <ListView 
-                hotels={displayedHotels}
-                isLoading={isLoadingHotels}
-                onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
-              />
-            ) : (
-              <HotelListPanel 
-                hotels={displayedHotels}
-                onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
-                isMobile={isMobile}
-              />
-            )}
+            <HotelListPanel 
+              hotels={displayedHotels}
+              onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
+              isMobile={isMobile}
+              activeFilters={activeFilters}
+              onFiltersChange={setActiveFilters}
+              onMobileFilterButtonClick={() => {}}
+            />
           </div>
 
-          {viewMode === 'map' && (
-            <Button
-              variant="secondary"
-              size="icon"
-              className={cn(
-                "absolute top-2 left-[100%] ml-[5px]",
-                "z-30 h-10 w-10 rounded-full",
-                "bg-background/95 shadow-lg backdrop-blur-sm hover:bg-background/80",
-                "transition-all duration-500 ease-out"
-              )}
-              onClick={handlePanelToggle}
-              disabled={!mapReady}
-            >
-              <ChevronLeft
-                className="h-4 w-4 transition-transform duration-500 ease-out"
-                style={{ transform: isPanelOpen ? 'rotate(0deg)' : 'rotate(180deg)' }}
-              />
-            </Button>
-          )}
+          <Button
+            variant="secondary"
+            size="icon"
+            className={cn(
+              "absolute top-2 left-[100%] ml-[5px]",
+              "z-30 h-10 w-10 rounded-full",
+              "bg-background/95 shadow-lg backdrop-blur-sm hover:bg-background/80",
+              "transition-all duration-500 ease-out"
+            )}
+            onClick={handlePanelToggle}
+            disabled={!mapReady}
+          >
+            <ChevronLeft
+              className="h-4 w-4 transition-transform duration-500 ease-out"
+              style={{ transform: isPanelOpen ? 'rotate(0deg)' : 'rotate(180deg)' }}
+            />
+          </Button>
         </aside>
       )}
 
@@ -608,8 +562,7 @@ function HotelSearchPageContent() {
 
       <div className={cn(
         "absolute inset-0 z-10",
-        isMobile ? `top-[${MOBILE_SEARCH_BAR_HEIGHT}px]` : "top-0",
-        (viewMode === "list" && !isMobile) && "opacity-20 pointer-events-none"
+        isMobile ? `top-[${MOBILE_SEARCH_BAR_HEIGHT}px]` : "top-0"
       )}>
         <MapboxMap 
           hotels={displayedHotels}
@@ -629,14 +582,6 @@ function HotelSearchPageContent() {
         />
       </div>
 
-      <ViewToggle 
-        activeView={viewMode}
-        onChange={handleViewChange}
-        className={cn(
-            "absolute z-30 top-8 right-8 bg-white shadow-md rounded-md p-1"
-        )}
-      />
-
       {selectedHotelForModal && (
         <HotelDetailModal 
           hotel={selectedHotelForModal} 
@@ -644,37 +589,17 @@ function HotelSearchPageContent() {
         />
       )}
 
-      {viewMode === 'list' && (
-        <div className={cn(
-          "fixed inset-0 z-30 bg-white dark:bg-gray-900 md:inset-4 md:rounded-xl md:shadow-2xl overflow-y-auto",
-          isMobile ? "pt-16" : "pt-4"
-        )}>
-          <div className={cn(
-            "sticky top-0 bg-white dark:bg-gray-900 z-10 px-4 pt-4 pb-2 md:pb-4",
-            isMobile ? "fixed w-full top-0 left-0 right-0 shadow-md" : ""
-          )}>
-             <div className="flex items-center justify-between">
-                <DynamicMapboxSearchInput
-                  onLocationRetrieved={handleLocationRetrieved}
-                  onNoResultsFound={() => {}}
-                  isLoading={isLoadingHotels} 
-                  className="flex-grow" 
-                  initialValue={currentCityNameForSearch}
-                />
-                 <Button variant="ghost" size="icon" onClick={() => setShowFilters(!showFilters)} className="ml-2">
-                  <FilterIcon className="h-5 w-5" />
-                </Button>
-              </div>
-              {showFilters && (
-                 <div className="mt-2">
-                   <FilterChips activeFilters={activeFilters} onFilterChange={setActiveFilters} availableLoyaltyPrograms={filterChipOptions} />
-                </div>
-              )}
-          </div>
-          <div className={isMobile ? "mt-10 md:mt-0" : ""}> 
-            {listViewContent}
-          </div>
-        </div>
+      {/* Mobile Filter Modal */}
+      {isMobile && (
+        <FilterModal
+          isOpen={showFilters}
+          onClose={() => setShowFilters(false)}
+          activeFilters={activeFilters}
+          onApplyFilters={(newFilters) => {
+            setActiveFilters(newFilters);
+            setShowFilters(false);
+          }}
+        />
       )}
     </div>
   );
@@ -683,11 +608,9 @@ function HotelSearchPageContent() {
 export default function HotelSearchPage() {
   return (
     <UIInteractionProvider>
-      <ViewModeProvider>
-        <SearchProvider>
-          <HotelSearchPageContent />
-        </SearchProvider>
-      </ViewModeProvider>
+      <SearchProvider>
+        <HotelSearchPageContent />
+      </SearchProvider>
     </UIInteractionProvider>
   );
 }

@@ -1,38 +1,95 @@
 "use client";
 
+import React from 'react';
 import HotelCard from '@/app/components/HotelCard';
 import type { ClientHotel } from '@/lib/pelotonAPI';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
+import FilterPanel from './FilterPanel';
+import { Filters } from './FilterChips';
 
 // Renaming SearchPanelPlaceholder to HotelListPanel for clarity
-const HotelListPanel = ({ onHotelSelect, hotels, isMobile = false }: { 
+const HotelListPanel = ({
+  onHotelSelect,
+  hotels,
+  isMobile = false,
+  activeFilters,
+  onFiltersChange,
+  onMobileFilterButtonClick
+}: {
   onHotelSelect: (hotel: ClientHotel) => void;
   hotels: ClientHotel[];
   isMobile?: boolean;
+  activeFilters: Filters;
+  onFiltersChange: (newFilters: Filters) => void;
+  onMobileFilterButtonClick: () => void;
 }) => {
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
-  if (hotels.length === 0) {
+
+  const hasActiveFilters = activeFilters.inRoom || activeFilters.inGym || activeFilters.loyaltyPrograms.length > 0;
+
+  if (hotels.length === 0 && !hasActiveFilters) {
     return (
-        <div className="p-4 text-center text-gray-500">
-            <p>No hotels to display for this area yet, or try searching a city.</p>
-        </div>
+      <div className="p-4 text-center text-gray-500">
+        <p>No hotels to display for this area yet, or try searching a city.</p>
+      </div>
     );
   }
+
   return (
-    <div className="p-4 space-y-3">
-      {/* <h2 className="text-lg font-semibold mb-4">Hotels Found</h2> Removed for cleaner look, can be added back */}
-      {hotels.map(hotel => (
-        <HotelCard 
-          key={hotel.id} 
-          hotel={hotel} 
-          onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
-          onClick={() => onHotelSelect(hotel)}
-          isHovered={hotel.id === uiState.activeHotelId}
-          isAnyHovered={uiState.activeHotelId !== null}
-          isMobile={isMobile}
-        />
-      ))}
-    </div>
+    <>
+      <div className="p-4 space-y-3">
+        {/* Desktop Filter Panel */}
+        {!isMobile && (
+          <FilterPanel
+            activeFilters={activeFilters}
+            onFiltersChange={onFiltersChange}
+          />
+        )}
+
+        {/* Mobile Filter Button - when in mobile mode */}
+        {isMobile && (
+          <div className="pb-3">
+            <FilterPanel
+              isMobile
+              activeFilters={activeFilters}
+              onFiltersChange={onMobileFilterButtonClick}
+            />
+          </div>
+        )}
+
+        {/* Show filtered results count if filters are active */}
+        {hasActiveFilters && hotels.length > 0 && (
+          <div className="pb-2 text-sm text-gray-500">
+            Showing {hotels.length} hotel(s) matching your filters.
+          </div>
+        )}
+
+        {/* Hotel List */}
+        {hotels.length > 0 ? (
+          hotels.map(hotel => (
+            <HotelCard 
+              key={hotel.id} 
+              hotel={hotel} 
+              onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
+              onClick={() => onHotelSelect(hotel)}
+              isHovered={hotel.id === uiState.activeHotelId}
+              isAnyHovered={uiState.activeHotelId !== null}
+              isMobile={isMobile}
+            />
+          ))
+        ) : (
+          <div className="text-center text-gray-500 py-4">
+            <p>No hotels match your current filters.</p>
+            <button 
+              className="text-primary text-sm font-medium mt-1"
+              onClick={() => onFiltersChange({ inRoom: false, inGym: false, loyaltyPrograms: [] })}
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 

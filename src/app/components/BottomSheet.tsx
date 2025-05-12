@@ -36,6 +36,7 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
   const [sheetState, setSheetState] = useState<BottomSheetState>(initialState);
   const [currentHeight, setCurrentHeight] = useState(0); // Store height in px for smoother drag
+  
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef<number | null>(null);
   const dragStartHeight = useRef<number | null>(null);
@@ -177,53 +178,56 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
   }));
 
   return (
-    <div
-      ref={sheetRef}
-      className={cn(
-        "fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-2xl rounded-t-2xl",
-        "overflow-hidden", // Prevents content spill during animation
-        !isDragging.current && "transition-[height] duration-300 ease-in-out" // Apply transition only when not dragging
-      )}
-      style={{ height: `${currentHeight}px` }}
-      onTouchStart={handleDragStart}
-      onTouchMove={handleDragMove}
-      onTouchEnd={handleDragEnd}
-    >
+    <>
       <div
-        className="py-3 flex items-center justify-center cursor-grab touch-none" // Added touch-none
-        style={{ height: `${HANDLE_AREA_HEIGHT_PX}px` }}
-        onClick={handleToggleByHandle} // Click on handle toggles between peek/full
-      >
-        {/* Drag Handle Indicator */}
-        <div className="w-10 h-1.5 bg-gray-300 rounded-full" />
-      </div>
-
-      <div 
-        className="overflow-y-auto p-4 bottom-sheet-content" 
-        style={{ height: `calc(100% - ${HANDLE_AREA_HEIGHT_PX}px)` }}
-      >
-        {hotels.length > 0 ? (
-          <div className="space-y-3">
-            {hotels.map(hotel => (
-              <HotelCard
-                key={hotel.id}
-                hotel={hotel}
-                onClick={() => onHotelSelect(hotel)}
-                onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
-                isHovered={hotel.id === uiState.activeHotelId}
-                isAnyHovered={uiState.activeHotelId !== null}
-                isMobile={true}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="text-center text-gray-500 py-8">
-            <p>No hotels found in this area.</p>
-            <p className="text-sm">Try searching a different city.</p>
-          </div>
+        ref={sheetRef}
+        className={cn(
+          "fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-2xl rounded-t-2xl",
+          "overflow-hidden", // Prevents content spill during animation
+          !isDragging.current && "transition-[height] duration-300 ease-in-out" // Apply transition only when not dragging
         )}
+        style={{ height: `${currentHeight}px` }}
+        onTouchStart={handleDragStart}
+        onTouchMove={handleDragMove}
+        onTouchEnd={handleDragEnd}
+      >
+        <div
+          className="py-3 flex items-center justify-center cursor-grab touch-none" // Added touch-none
+          style={{ height: `${HANDLE_AREA_HEIGHT_PX}px` }}
+          onClick={handleToggleByHandle} // Click on handle toggles between peek/full
+        >
+          {/* Drag Handle Indicator */}
+          <div className="w-10 h-1.5 bg-gray-300 rounded-full" />
+        </div>
+
+        <div 
+          className="overflow-y-auto p-4 bottom-sheet-content" 
+          style={{ height: `calc(100% - ${HANDLE_AREA_HEIGHT_PX}px)` }}
+        >
+          {/* Show filtered results count if hotels are filtered */}
+          {hotels.length > 0 ? (
+            <div className="space-y-3">
+              {hotels.map(hotel => (
+                <HotelCard
+                  key={hotel.id}
+                  hotel={hotel}
+                  onClick={() => onHotelSelect(hotel)}
+                  onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
+                  isHovered={hotel.id === uiState.activeHotelId}
+                  isAnyHovered={uiState.activeHotelId !== null}
+                  isMobile={true}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center text-gray-500 py-8">
+              <p>No hotels match your current filters.</p>
+              <p className="text-sm">Try adjusting your filters or searching a different city.</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 });
 
