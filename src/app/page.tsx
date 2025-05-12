@@ -34,7 +34,7 @@ const PRIMARY_LOYALTY_PROGRAMS = [
 ];
 
 const MOBILE_BREAKPOINT = 768;
-const DESKTOP_SIDEBAR_WIDTH = 420;
+const DESKTOP_SIDEBAR_WIDTH_PERCENTAGE = 33.33; // Changed from fixed 420px to percentage
 const MOBILE_SEARCH_BAR_HEIGHT = 60; // Approximate height for the search bar on mobile
 
 // New Interface for unified map focus state management
@@ -348,6 +348,18 @@ function HotelSearchPageContent() {
   const handleHotelSelect = useCallback((hotel: ClientHotel, source: 'list' | 'map' = 'list') => {
     if (isMobile) {
       if (source === 'list') { // Tap from BottomSheet or other list components
+        // First update map focus state directly to ensure it stays focused
+        setMapFocusState({
+          type: 'match_found', // Using match_found to ensure consistent behavior
+          centerCoordinates: [hotel.lng, hotel.lat],
+          zoomLevel: ZOOM_LEVELS.HOTEL,
+          focusedHotelId: hotel.id
+        });
+        
+        // Explicitly set active hotel ID for mobile list selection
+        setActiveHotel(hotel.id, 'sidebar_hover');
+        
+        // Then handle location retrieval (which may trigger other state changes)
         handleLocationRetrieved({
           lat: hotel.lat,
           lng: hotel.lng,
@@ -357,7 +369,13 @@ function HotelSearchPageContent() {
           featureType: 'poi',
           category: '',
         });
+        
         bottomSheetRef.current?.snapToState('peek');
+        
+        // Ensure active hotel state persists after location change
+        setTimeout(() => {
+          setActiveHotel(hotel.id, 'sidebar_hover');
+        }, 100);
       } else { // source === 'map' (Tap on map marker)
         if (hotel.id === uiState.activeHotelId) { // Tapped the currently focused/selected or API matched hotel marker
           setSelectedHotelForModal(hotel);
@@ -379,7 +397,7 @@ function HotelSearchPageContent() {
       // Desktop behavior: open modal
       setSelectedHotelForModal(hotel);
     }
-  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId]); 
+  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState, ZOOM_LEVELS]);
 
   useEffect(() => {
     if (mapRef.current && mapReady && !initialPaddingSet) {
@@ -393,8 +411,10 @@ function HotelSearchPageContent() {
           setCurrentBottomSheetState('closed');
         }
       }
+      // Calculate sidebar width based on window width
+      const sidebarWidthPx = (window.innerWidth * DESKTOP_SIDEBAR_WIDTH_PERCENTAGE) / 100;
       const basePadding = {
-        left: !isMobile && isPanelOpen ? DESKTOP_SIDEBAR_WIDTH : 0,
+        left: !isMobile && isPanelOpen ? sidebarWidthPx : 0,
         right: 0,
         top: isMobile ? MOBILE_SEARCH_BAR_HEIGHT : 0
       };
@@ -417,7 +437,9 @@ function HotelSearchPageContent() {
       setCurrentBottomSheetState(newIsOpen ? 'peek' : 'closed');
     } else {
       if (mapRef.current && mapReady) {
-        const targetPaddingLeft = newIsOpen ? DESKTOP_SIDEBAR_WIDTH : 0;
+        // Calculate sidebar width based on window width
+        const sidebarWidthPx = (window.innerWidth * DESKTOP_SIDEBAR_WIDTH_PERCENTAGE) / 100;
+        const targetPaddingLeft = newIsOpen ? sidebarWidthPx : 0;
         const basePadding = { left: targetPaddingLeft, right: 0, top: 0 };
         mapRef.current.easeTo({ padding: { ...basePadding, bottom: 0 }, duration: 500, easing: cubicBezier(0.4, 0, 0.2, 1) });
         setTimeout(() => mapRef.current?.resize(), 550);
@@ -520,7 +542,7 @@ function HotelSearchPageContent() {
             "flex flex-col",
             viewMode === "list" 
               ? "inset-4 rounded-xl"
-              : `left-4 top-4 bottom-4 w-[${DESKTOP_SIDEBAR_WIDTH}px] rounded-3xl`,
+              : `left-4 top-4 bottom-4 w-1/3 rounded-3xl`,
             viewMode === 'map' && !isPanelOpen && "-translate-x-full"
           )}
         >
@@ -591,7 +613,7 @@ function HotelSearchPageContent() {
       )}>
         <MapboxMap 
           hotels={displayedHotels}
-          mapRef={mapRef} 
+          externalMapRef={mapRef} 
           onMarkerClick={(hotel) => handleHotelSelect(hotel, 'map')}
           onMapLoad={handleMapLoad}
           isMobile={isMobile}
