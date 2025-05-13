@@ -33,3 +33,76 @@ export const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
+
+/**
+ * Generates a bounding box string suitable for city searches (wide, ~10km)
+ * in the format expected by the hotelService.
+ * Mirrors the backend hotelService.generateWideBbox logic.
+ */
+export const generateWideBboxForService = (lat: number, lng: number): string => {
+  // Create a bounding box roughly 10km around the point
+  const offset = 0.1; // ~10km at mid-latitudes
+  const bboxJson = JSON.stringify({
+    coords: [
+      [lat - offset, lng - offset], // SW
+      [lat + offset, lng - offset], // NW
+      [lat + offset, lng + offset], // NE
+      [lat - offset, lng + offset], // SE
+    ],
+    center: { lat, lng },
+  });
+  console.log("[Utils] Generated wide bbox:", bboxJson);
+  return bboxJson;
+};
+
+/**
+ * Converts a Mapbox bounding box [minLng, minLat, maxLng, maxLat]
+ * to the JSON string format expected by the hotelService.
+ */
+export const convertMapboxBboxToServiceBboxJson = (
+  mapboxBbox: [number, number, number, number],
+  center: { lat: number; lng: number }
+): string => {
+  console.log("[Utils] Converting Mapbox bbox:", mapboxBbox);
+  
+  // Mapbox uses [minLng, minLat, maxLng, maxLat] format
+  const [minLng, minLat, maxLng, maxLat] = mapboxBbox;
+  
+  // For hotelService, coords are in [lat, lng] pairs in this order: SW, NW, NE, SE
+  // This matches the backend generateWideBbox implementation
+  const bboxJson = JSON.stringify({
+    coords: [
+      [minLat, minLng], // SW [lat, lng]
+      [maxLat, minLng], // NW [lat, lng]
+      [maxLat, maxLng], // NE [lat, lng]
+      [minLat, maxLng], // SE [lat, lng]
+    ],
+    center: center, // Use the provided center
+  });
+  
+  console.log("[Utils] Converted to service bbox format:", bboxJson);
+  return bboxJson;
+};
+
+/**
+ * Determines the API query bounding box string.
+ * Prefers using a Mapbox-provided bbox for the city if available,
+ * otherwise generates a wide bbox around the city's center.
+ */
+export const determineApiQueryBbox = (
+  cityMapboxFeature: import('@/app/components/search/CitySearchInput').MapboxGeocodingFeature
+): string => {
+  console.log("[Utils] Determining API query bbox for feature:", cityMapboxFeature);
+  
+  if (cityMapboxFeature.mapboxBbox) {
+    console.log("[Utils] Using mapboxBbox from feature for consistent caching");
+    return convertMapboxBboxToServiceBboxJson(
+      cityMapboxFeature.mapboxBbox,
+      { lat: cityMapboxFeature.lat, lng: cityMapboxFeature.lng }
+    );
+  }
+  
+  // Fallback if Mapbox doesn't provide a bbox for the city feature
+  console.log("[Utils] No mapboxBbox available, generating wide bbox");
+  return generateWideBboxForService(cityMapboxFeature.lat, cityMapboxFeature.lng);
+};

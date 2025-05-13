@@ -5,13 +5,15 @@ import { useAppContext } from '@/app/contexts/AppContext';
 import MapboxMap from '@/app/components/map/MapboxMap';
 import type { ClientHotel } from '@/lib/pelotonAPI';
 import { useDebouncedCallback } from '@/app/hooks/useDebouncedCallback';
+import { useSearchOrchestrator } from '@/app/hooks/useSearchOrchestrator';
 
-interface MapWrapperProps {
-  hotels: ClientHotel[];
-}
-
-const MapWrapper: React.FC<MapWrapperProps> = ({ hotels }) => {
+const MapWrapper: React.FC<MapWrapperProps> = () => {
+  console.log("[MapWrapper] Component rendering, integrating search orchestrator");
+  
+  // Move the hook call right after useAppContext to ensure it runs early
   const { state, dispatch } = useAppContext();
+  useSearchOrchestrator(); // This call is crucial for the bbox caching solution
+  
   const {
     mapCenter,
     mapZoom,
@@ -20,7 +22,8 @@ const MapWrapper: React.FC<MapWrapperProps> = ({ hotels }) => {
     hoveredHotelId,
     isMobile,
     isPanelOpen,
-    bottomSheetState
+    bottomSheetState,
+    hotels
   } = state;
 
   // Constants for padding calculation
@@ -72,9 +75,21 @@ const MapWrapper: React.FC<MapWrapperProps> = ({ hotels }) => {
     dispatch({ type: 'HOTEL_SELECTED', payload: { id: hotel.id, source: 'map' } });
   }, [dispatch]);
 
-  const handleMarkerHover = useCallback((id: number | null) => {
+  // Debounce marker hover events to prevent jittery behavior
+  const debouncedMarkerHover = useDebouncedCallback((id: number | null) => {
     dispatch({ type: 'HOTEL_HOVERED', payload: { id, source: 'map' } });
-  }, [dispatch]);
+  }, 100);
+
+  const handleMarkerHover = useCallback((id: number | null) => {
+    if (id === null) {
+      // For mouse leave, cancel any pending debounced hovers and immediately clear hover state
+      debouncedMarkerHover.cancel();
+      dispatch({ type: 'HOTEL_HOVERED', payload: { id: null, source: 'map' } });
+    } else {
+      // For mouse enter, debounce the hover action
+      debouncedMarkerHover(id);
+    }
+  }, [debouncedMarkerHover, dispatch]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -96,7 +111,7 @@ const MapWrapper: React.FC<MapWrapperProps> = ({ hotels }) => {
   return (
     <div className="mapbox-map-container" style={{ width: '100%', height: '100%' }}>
       <MapboxMap
-        hotels={hotels}
+        hotels={hotels || []}
         externalMapRef={mapRef}
         isMobile={isMobile}
         onMarkerClick={handleMarkerClick}

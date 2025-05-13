@@ -29,9 +29,14 @@ const HotelListPanel = ({
   showSkeletons?: boolean;
 }) => {
   const { state, dispatch } = useAppContext();
-  const { hoveredHotelId } = state;
+  const { hoveredHotelId, targetHotelId, highlightType } = state;
 
   const hasActiveFilters = activeFilters.inRoom || activeFilters.inGym || activeFilters.loyaltyPrograms.length > 0;
+
+  // Determine if any card in the list is considered "focused" (either by hover or search match)
+  const isAnyCardHovered = hoveredHotelId !== null;
+  const isAnyCardSearchFocused = highlightType === 'match_found' && targetHotelId !== null && hoveredHotelId === null;
+  const finalIsAnyListItemFocused = isAnyCardHovered || isAnyCardSearchFocused;
 
   // Show skeletons during loading
   if (showSkeletons) {
@@ -126,17 +131,31 @@ const HotelListPanel = ({
         )}
 
         {/* Hotel List */}
-        {hotels.map(hotel => (
-          <HotelCard 
-            key={hotel.id} 
-            hotel={hotel} 
-            onHover={(id) => dispatch({ type: 'HOTEL_HOVERED', payload: { id, source: 'sidebar' } })}
-            onClick={() => onHotelSelect(hotel)}
-            isHovered={hotel.id === hoveredHotelId}
-            isAnyHovered={hoveredHotelId !== null}
-            isMobile={isMobile}
-          />
-        ))}
+        {hotels.map(hotel => {
+          const isCardHovered = hotel.id === hoveredHotelId;
+          const isCardFocusedBySearch = 
+            highlightType === 'match_found' && 
+            hotel.id === targetHotelId && 
+            hoveredHotelId === null; // Only true if no active hover
+
+          return (
+            <HotelCard 
+              key={hotel.id} 
+              hotel={hotel} 
+              onHover={(id, lat, lng) => 
+                dispatch({ 
+                  type: 'HOTEL_HOVERED', 
+                  payload: { id, source: 'sidebar', lat, lng } 
+                })
+              }
+              onClick={() => onHotelSelect(hotel)}
+              isHovered={isCardHovered}
+              isFocusedBySearch={isCardFocusedBySearch}
+              isAnyListItemFocused={finalIsAnyListItemFocused}
+              isMobile={isMobile}
+            />
+          );
+        })}
       </div>
     </>
   );

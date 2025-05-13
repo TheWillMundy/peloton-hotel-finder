@@ -1,16 +1,18 @@
 "use client";
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import { Badge } from '@/app/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useDebouncedCallback } from '@/app/hooks/useDebouncedCallback';
 
 interface HotelCardProps {
   hotel: ClientHotel;
-  onHover?: (hotelId: number | null) => void;
+  onHover?: (hotelId: number | null, lat?: number, lng?: number) => void;
   onClick?: (hotel: ClientHotel) => void;
   isHovered?: boolean;
-  isAnyHovered?: boolean;
+  isFocusedBySearch?: boolean;
+  isAnyListItemFocused?: boolean;
   isMobile?: boolean;
 }
 
@@ -19,20 +21,28 @@ const HotelCard: React.FC<HotelCardProps> = ({
   onHover, 
   onClick, 
   isHovered = false,
-  isAnyHovered = false,
+  isFocusedBySearch = false,
+  isAnyListItemFocused = false,
   isMobile = false
 }) => {
-  const handleMouseEnter = () => {
-    if (onHover) onHover(hotel.id);
-  };
+  // Debounce the hover effect with a 100ms delay to prevent jitter
+  const debouncedHover = useDebouncedCallback((id: number | null, lat?: number, lng?: number) => {
+    if (onHover) onHover(id, lat, lng);
+  }, 100);
 
-  const handleMouseLeave = () => {
+  const handleMouseEnter = useCallback(() => {
+    debouncedHover(hotel.id, hotel.lat, hotel.lng);
+  }, [debouncedHover, hotel]);
+
+  const handleMouseLeave = useCallback(() => {
+    // Cancel any pending hover and immediately remove hover state
+    debouncedHover.cancel();
     if (onHover) onHover(null);
-  };
+  }, [debouncedHover, onHover]);
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (onClick) onClick(hotel);
-  };
+  }, [hotel, onClick]);
 
   // Feature icons mapping - improved with descriptive emojis
   const getFeatureIcon = (feature: string) => {
@@ -73,13 +83,17 @@ const HotelCard: React.FC<HotelCardProps> = ({
     }
   };
 
+  // Determine card's visual state
+  const cardIsPrimaryFocus = isHovered || (isFocusedBySearch && !isHovered);
+  const shouldDimThisCard = isAnyListItemFocused && !cardIsPrimaryFocus;
+
   return (
     <div 
       className={cn(
         "bg-white border rounded-lg p-3 transition-all duration-300 cursor-pointer relative",
-        !isMobile && isHovered 
+        !isMobile && cardIsPrimaryFocus 
           ? "shadow-lg bg-background/5 z-10 opacity-100 scale-[1.02]"
-          : !isMobile && isAnyHovered 
+          : !isMobile && shouldDimThisCard 
             ? "border-border hover:shadow-md hover:border-border/70 opacity-70"
             : "border-border hover:shadow-md hover:border-border/70 opacity-100"
       )}
@@ -89,7 +103,7 @@ const HotelCard: React.FC<HotelCardProps> = ({
       data-hotel-id={hotel.id}
     >
       {/* Accent marker on the right when hovered */}
-      {!isMobile && isHovered && (
+      {!isMobile && cardIsPrimaryFocus && (
         <div className="absolute top-0 bottom-0 right-0 w-2 bg-in-room-marker rounded-r-lg"></div>
       )}
       <div className="flex items-start gap-3">

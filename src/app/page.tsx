@@ -1,19 +1,13 @@
 "use client";
 
 // React and Next.js imports
-import { useState, useEffect, useCallback, useMemo } from 'react';
-
-// Third-party library imports
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { fetchHotels, type FetchHotelParams, type HotelsApiResponse } from '@/lib/clientHotelService';
+import { useState, useCallback } from 'react';
 
 // Context imports
 import { AppProvider, useAppContext } from '@/app/contexts/AppContext';
 
 // UI component imports
 import { Button } from '@/app/components/ui/button';
-
-// Map component imports
 
 // Hotel component imports
 import HotelDetailModal from '@/app/components/hotel/HotelDetailModal';
@@ -28,9 +22,9 @@ import { cn } from '@/lib/utils';
 import DesktopLayout from '@/app/components/layout/DesktopLayout';
 import MobileLayout from '@/app/components/layout/MobileLayout';
 
-// Dynamically imported components
-
+// Custom hooks
 import useFilteredHotels from '@/app/hooks/useFilteredHotels';
+import useHotelsQuery from '@/app/hooks/useHotelsQuery';
 
 function HotelSearchPageContent() {
   const { state, dispatch } = useAppContext();
@@ -40,59 +34,28 @@ function HotelSearchPageContent() {
     selectedHotelIdForModal,
     isMobile,
     showSearchAreaButton,
-    isPanelOpen
+    isPanelOpen,
+    hotels: hotelsFromContext
   } = state;
 
   const [showFilters, setShowFilters] = useState(false);
 
-  // Derive service query parameters
-  const queryParams: FetchHotelParams | null = useMemo(() => {
-    if (!currentIntent.location) return null;
-    const { lat, lng } = currentIntent.location;
-    const featureType = currentIntent.searchType === 'hotel' ? 'poi' : 'place';
-    const freeText = currentIntent.searchType === 'hotel' ? currentIntent.selectedHotelNameForQuery || undefined : undefined;
-    const cityBbox = !currentIntent.needsFresh && state.lastSearchedMapBounds
-      ? state.lastSearchedMapBounds
-      : !currentIntent.needsFresh && currentIntent.mapboxFeatureBbox
-        ? currentIntent.mapboxFeatureBbox
-        : null;
-    return { lat, lng, searchTerm: currentIntent.searchTerm || undefined, featureType, freeText, cityBbox };
-  }, [currentIntent, state.lastSearchedMapBounds]);
-
+  // Use the custom hook for React Query
   const { 
-    data: apiResponse, 
     isLoading,
     isFetching,
     isPlaceholderData,
-  } = useQuery<HotelsApiResponse, Error>({
-    queryKey: ['hotels', queryParams],
-    queryFn: async () => {
-      if (!queryParams) {
-        return { hotels: [], cityBbox: null } as HotelsApiResponse;
-      }
-      return fetchHotels(queryParams);
-    },
-    enabled: !!queryParams,
-    retry: 1,
-    placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  useEffect(() => {
-    if (apiResponse) {
-      dispatch({ type: 'API_RESPONSE_RECEIVED', payload: apiResponse as any });
-    }
-  }, [apiResponse, dispatch]);
+    matchedHotel
+  } = useHotelsQuery();
 
   const showSkeletons = isLoading || (isFetching && isPlaceholderData);
-  const hotelsFromApi = useMemo(() => apiResponse?.hotels || [], [apiResponse]);
-  const matchedHotelFromApi = useMemo(() => apiResponse?.matchedHotel, [apiResponse]);
-
+  
+  // Use hotels from context instead of from query directly
   const displayedHotels = useFilteredHotels(
-    hotelsFromApi,
+    hotelsFromContext || [],
     activeFilters,
     currentIntent,
-    matchedHotelFromApi,
+    matchedHotel,
     showSkeletons
   );
 
@@ -112,13 +75,11 @@ function HotelSearchPageContent() {
     <div className="relative h-screen w-full overflow-hidden bg-gray-100">
       {isMobile ? (
         <MobileLayout 
-          hotels={displayedHotels} 
           isFetching={isLoading || isFetching} 
           showSkeletons={showSkeletons} 
         />
       ) : (
         <DesktopLayout 
-          hotels={displayedHotels} 
           isLoadingQuery={isLoading || isFetching} 
           showSkeletons={showSkeletons} 
         />

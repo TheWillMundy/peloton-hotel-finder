@@ -5,6 +5,7 @@ import type { MapboxGeocodingFeature } from '@/app/components/search/CitySearchI
 import type { ClientHotel } from '@/lib/pelotonAPI';
 import type { Filters } from '@/app/components/filter/FilterChips';
 import type { BottomSheetState } from '@/app/components/ui/BottomSheet';
+import { determineApiQueryBbox } from '@/lib/utils';
 
 // Define zoom levels
 export const ZOOM_LEVELS = {
@@ -23,8 +24,8 @@ export interface SearchIntent {
   searchType: 'city' | 'hotel' | 'none';
   searchTerm: string | null;
   selectedHotelNameForQuery: string | null;
-  mapboxFeatureBbox: string | null;
-  rawMapboxFeature: MapboxGeocodingFeature | null;
+  apiQueryBbox: string | null;
+  originalSelectedFeature: MapboxGeocodingFeature | null;
   needsFresh: boolean;
 }
 
@@ -46,6 +47,18 @@ export interface AppState {
   hoverSource: InteractionSource;
   selectedHotelIdForModal: number | null;
 
+  // State preservation for hover interactions
+  preHoverHighlightType: HighlightType | null;
+  preHoverTargetHotelId: number | null;
+  preSidebarHoverMapCenter: [number, number] | null;
+  preSidebarHoverMapZoom: number | null;
+
+  initialSearchMatchTargetId: number | null;
+
+  // Hotels data
+  hotels: ClientHotel[];
+  matchedHotel: ClientHotel | null;
+
   // Filters
   activeFilters: Filters;
 
@@ -63,6 +76,8 @@ export type AppAction =
   | { type: 'SET_BOTTOM_SHEET_STATE'; payload: BottomSheetState }
   | { type: 'LOCATION_SELECTED'; payload: MapboxGeocodingFeature }
   | { type: 'SEARCH_THIS_AREA' }
+  | { type: 'CITY_RESOLUTION_COMPLETE'; payload: { cityFeature: MapboxGeocodingFeature | null, originalSearchIntent: SearchIntent } }
+  | { type: 'API_REQUEST_INITIATED' }
   | { type: 'API_RESPONSE_RECEIVED'; payload: {
       hotels: ClientHotel[];
       cityCenter: [number, number];
@@ -72,7 +87,7 @@ export type AppAction =
       searchedPoinLocation?: { lat: number; lng: number; name: string } | null;
     } }
   | { type: 'MAP_MOVED_INTERACTIVELY'; payload: { center: [number, number]; zoom: number; bounds: string } }
-  | { type: 'HOTEL_HOVERED'; payload: { id: number | null; source: InteractionSource } }
+  | { type: 'HOTEL_HOVERED'; payload: { id: number | null; source: InteractionSource; lat?: number; lng?: number } }
   | { type: 'HOTEL_SELECTED'; payload: { id: number; source: 'map' | 'list' } }
   | { type: 'CLOSE_HOTEL_MODAL' }
   | { type: 'FILTERS_CHANGED'; payload: Filters };
@@ -82,8 +97,8 @@ const initialIntent: SearchIntent = {
   searchType: 'none',
   searchTerm: null,
   selectedHotelNameForQuery: null,
-  mapboxFeatureBbox: null,
-  rawMapboxFeature: null,
+  apiQueryBbox: null,
+  originalSelectedFeature: null,
   needsFresh: false
 };
 
@@ -98,6 +113,13 @@ export const initialState: AppState = {
   hoveredHotelId: null,
   hoverSource: 'none',
   selectedHotelIdForModal: null,
+  preHoverHighlightType: null,
+  preHoverTargetHotelId: null,
+  preSidebarHoverMapCenter: null,
+  preSidebarHoverMapZoom: null,
+  initialSearchMatchTargetId: null,
+  hotels: [],
+  matchedHotel: null,
   activeFilters: { inRoom: false, inGym: false, loyaltyPrograms: [] },
   isMobile: false,
   isPanelOpen: true,
@@ -116,34 +138,52 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, bottomSheetState: action.payload };
     case 'LOCATION_SELECTED': {
       const feature = action.payload;
-      const isHotelSearch = feature.featureType === 'poi';
+      console.log("[AppContext] LOCATION_SELECTED received feature:", JSON.stringify(feature, null, 2));
+
+      const apiQueryBboxString = determineApiQueryBbox(feature);
+      console.log("[AppContext] Determined apiQueryBbox:", apiQueryBboxString);
+
+      const intentSearchType = feature.hotelName ? 'hotel' : 'city';
+      console.log("[AppContext] Search type based on hotelName:", intentSearchType);
+
       const intent: SearchIntent = {
         location: { lat: feature.lat, lng: feature.lng },
-        searchType: isHotelSearch ? 'hotel' : 'city',
+        searchType: intentSearchType,
         searchTerm: feature.placeName,
-        selectedHotelNameForQuery: isHotelSearch ? (feature.hotelName || feature.placeName) : null,
-        mapboxFeatureBbox: feature.mapboxBbox ? feature.mapboxBbox.join(',') : null,
-        rawMapboxFeature: feature,
-        needsFresh: true
+        selectedHotelNameForQuery: feature.hotelName || null,
+        apiQueryBbox: apiQueryBboxString,
+        originalSelectedFeature: feature,
+        needsFresh: true,
       };
+      console.log("[AppContext] New searchIntent:", JSON.stringify(intent, null, 2));
+
       return {
         ...state,
         searchIntent: intent,
-        lastSearchedMapBounds: intent.mapboxFeatureBbox,
+        lastSearchedMapBounds: apiQueryBboxString,
         interactiveMapState: null,
         highlightType: 'idle',
         targetHotelId: null,
+        initialSearchMatchTargetId: null,
         hoveredHotelId: null,
-        hoverSource: 'none',
         selectedHotelIdForModal: null,
-        showSearchAreaButton: false
+        showSearchAreaButton: false,
       };
     }
     case 'SEARCH_THIS_AREA': {
       const ims = state.interactiveMapState;
       if (!ims) return state;
+      console.log("[AppContext] Search this area triggered with bounds:", ims.bounds);
       const { center, zoom, bounds } = ims;
-      const intent = { ...state.searchIntent, location: { lat: center[1], lng: center[0] }, needsFresh: true };
+      const intent: SearchIntent = {
+        location: { lat: center[1], lng: center[0] },
+        searchType: 'city',
+        searchTerm: 'Search this area results',
+        selectedHotelNameForQuery: null,
+        apiQueryBbox: bounds,
+        originalSelectedFeature: null,
+        needsFresh: true,
+      };
       return {
         ...state,
         searchIntent: intent,
@@ -151,39 +191,62 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mapCenter: center,
         mapZoom: zoom,
         showSearchAreaButton: false,
-        interactiveMapState: null
+        interactiveMapState: null,
       };
     }
+    case 'API_REQUEST_INITIATED':
+      return {
+        ...state,
+        searchIntent: { ...state.searchIntent, needsFresh: false },
+      };
     case 'API_RESPONSE_RECEIVED': {
-      const { cityCenter, matchedHotel, searchedPoinLocation } = action.payload;
-      // Determine highlight and focus based on intent
-      const isHotel = state.searchIntent.searchType === 'hotel';
-      if (isHotel && matchedHotel) {
+      const { hotels, cityCenter, matchedHotel, searchedPoinLocation } = action.payload;
+      const updatedIntent: SearchIntent = {
+        ...state.searchIntent,
+        needsFresh: false,
+        originalSelectedFeature: null,
+      };
+      console.log("[AppContext] API_RESPONSE_RECEIVED, updatedIntent:", JSON.stringify(updatedIntent, null, 2));
+
+      const updatedState = {
+        ...state,
+        hotels: hotels || [],
+        matchedHotel: matchedHotel || null,
+        searchIntent: updatedIntent
+      };
+
+      if (matchedHotel && state.searchIntent.searchType === 'hotel') {
+        console.log("[AppContext] Matched hotel found, focusing map.");
         return {
-          ...state,
+          ...updatedState,
           mapCenter: [matchedHotel.lng, matchedHotel.lat],
           mapZoom: ZOOM_LEVELS.HOTEL,
           highlightType: 'match_found',
-          targetHotelId: matchedHotel.id
+          targetHotelId: matchedHotel.id,
+          initialSearchMatchTargetId: matchedHotel.id,
+          hoveredHotelId: null,
         };
-      }
-      if (isHotel && searchedPoinLocation) {
+      } else if (searchedPoinLocation && state.searchIntent.searchType === 'hotel') {
+        console.log("[AppContext] Hotel search, no match, focusing on searched POI location.");
         return {
-          ...state,
+          ...updatedState,
           mapCenter: [searchedPoinLocation.lng, searchedPoinLocation.lat],
           mapZoom: ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
           highlightType: 'poi_no_match',
-          targetHotelId: null
+          targetHotelId: null,
+        };
+      } else if (cityCenter) {
+        console.log("[AppContext] City search or hotel search with no match, focusing on city center.");
+        return {
+          ...updatedState,
+          mapCenter: cityCenter,
+          mapZoom: ZOOM_LEVELS.CITY,
+          highlightType: 'city_overview',
+          targetHotelId: null,
         };
       }
-      // City search fallback
-      return {
-        ...state,
-        mapCenter: cityCenter || state.mapCenter,
-        mapZoom: ZOOM_LEVELS.CITY,
-        highlightType: 'city_overview',
-        targetHotelId: null
-      };
+      console.log("[AppContext] API_RESPONSE_RECEIVED, falling back to current state for map focus.");
+      return updatedState;
     }
     case 'MAP_MOVED_INTERACTIVELY': {
       const { center, zoom, bounds } = action.payload;
@@ -191,14 +254,84 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mapCenter: center, mapZoom: zoom, showSearchAreaButton: showButton, interactiveMapState: { center, zoom, bounds } };
     }
     case 'HOTEL_HOVERED': {
-      const { id, source } = action.payload;
-      return {
-        ...state,
-        hoveredHotelId: id,
-        hoverSource: source,
-        highlightType: id ? 'hover_focus' : state.highlightType,
-        targetHotelId: id || state.targetHotelId
-      };
+      const { id, source, lat, lng } = action.payload;
+      const currentlyHoveredHotelIdBeforeUnhover = state.hoveredHotelId;
+
+      if (id !== null) {
+        const isNewHoverTarget = id !== state.hoveredHotelId;
+        return {
+          ...state,
+          hoveredHotelId: id,
+          hoverSource: source,
+          highlightType: 'hover_focus',
+          targetHotelId: id,
+          preHoverHighlightType: isNewHoverTarget ? state.highlightType : state.preHoverHighlightType,
+          preHoverTargetHotelId: isNewHoverTarget ? state.targetHotelId : state.preHoverTargetHotelId,
+          mapCenter: (source === 'sidebar' && lat !== undefined && lng !== undefined) ? [lng, lat] : state.mapCenter,
+          mapZoom: (source === 'sidebar' && lat !== undefined && lng !== undefined) ? ZOOM_LEVELS.HOTEL : state.mapZoom,
+          preSidebarHoverMapCenter: (source === 'sidebar' && lat !== undefined && lng !== undefined && isNewHoverTarget) ? [...state.mapCenter] : state.preSidebarHoverMapCenter,
+          preSidebarHoverMapZoom: (source === 'sidebar' && lat !== undefined && lng !== undefined && isNewHoverTarget) ? state.mapZoom : state.preSidebarHoverMapZoom,
+        };
+      } 
+      else {
+        let nextHighlightType = 'idle' as HighlightType;
+        let nextTargetHotelId = null as number | null;
+        let nextInitialSearchMatchTargetId = state.initialSearchMatchTargetId;
+        let nextMapCenter = state.mapCenter;
+        let nextMapZoom = state.mapZoom;
+
+        const unhoveringFromDifferentThanInitialSearch = 
+          state.initialSearchMatchTargetId !== null &&
+          currentlyHoveredHotelIdBeforeUnhover !== null &&
+          currentlyHoveredHotelIdBeforeUnhover !== state.initialSearchMatchTargetId;
+
+        if (unhoveringFromDifferentThanInitialSearch) {
+          nextHighlightType = 'idle';
+          nextTargetHotelId = null;
+          nextInitialSearchMatchTargetId = null;
+          if (state.hoverSource === 'sidebar' && state.preSidebarHoverMapCenter) {
+            nextMapCenter = state.preSidebarHoverMapCenter;
+            nextMapZoom = state.preSidebarHoverMapZoom || state.mapZoom;
+          } else {
+            if(state.searchIntent.location && state.searchIntent.searchType === 'city'){
+                nextMapCenter = [state.searchIntent.location.lng, state.searchIntent.location.lat];
+                nextMapZoom = ZOOM_LEVELS.CITY;
+            }
+          }
+        } else if (state.selectedHotelIdForModal && currentlyHoveredHotelIdBeforeUnhover !== state.selectedHotelIdForModal) {
+          nextHighlightType = 'match_found';
+          nextTargetHotelId = state.selectedHotelIdForModal;
+          nextInitialSearchMatchTargetId = state.initialSearchMatchTargetId;
+        } else if (state.preHoverHighlightType === 'match_found' && state.preHoverTargetHotelId !== null) {
+          nextHighlightType = 'match_found';
+          nextTargetHotelId = state.preHoverTargetHotelId;
+          nextInitialSearchMatchTargetId = state.initialSearchMatchTargetId;
+          if(nextTargetHotelId){
+          }
+        } else {
+          nextHighlightType = state.preHoverHighlightType || 'idle';
+          nextTargetHotelId = state.preHoverTargetHotelId;
+          if (state.hoverSource === 'sidebar' && state.preSidebarHoverMapCenter) {
+            nextMapCenter = state.preSidebarHoverMapCenter;
+            nextMapZoom = state.preSidebarHoverMapZoom || state.mapZoom;
+          }
+        }
+
+        return {
+          ...state,
+          hoveredHotelId: null,
+          hoverSource: 'none',
+          highlightType: nextHighlightType,
+          targetHotelId: nextTargetHotelId,
+          initialSearchMatchTargetId: nextInitialSearchMatchTargetId,
+          mapCenter: nextMapCenter,
+          mapZoom: nextMapZoom,
+          preHoverHighlightType: null, 
+          preHoverTargetHotelId: null,
+          preSidebarHoverMapCenter: null, 
+          preSidebarHoverMapZoom: null, 
+        };
+      }
     }
     case 'HOTEL_SELECTED': {
       const { id, source } = action.payload;
@@ -213,7 +346,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           hoverSource: 'none'
         };
       }
-      // Desktop: open modal
       return { ...state, selectedHotelIdForModal: id };
     }
     case 'CLOSE_HOTEL_MODAL':

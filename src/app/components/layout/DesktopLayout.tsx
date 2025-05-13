@@ -1,4 +1,4 @@
-import React, { useCallback, memo } from 'react';
+import React, { useCallback, memo, useRef, useEffect } from 'react';
 import { useAppContext } from '@/app/contexts/AppContext';
 import HotelListPanel from '@/app/components/hotel/HotelListPanel';
 import MapWrapper from '../map/MapWrapper';
@@ -10,18 +10,33 @@ import dynamic from 'next/dynamic';
 const CitySearchInput = dynamic(() => import('@/app/components/search/CitySearchInput'), { ssr: false });
 
 interface DesktopLayoutProps {
-  hotels: any[]; // Filtered hotels array
   showSkeletons: boolean;
   isLoadingQuery: boolean; // Receive loading state from page.tsx
 }
 
-function DesktopLayout({ hotels, showSkeletons, isLoadingQuery }: DesktopLayoutProps) {
+function DesktopLayout({ showSkeletons, isLoadingQuery }: DesktopLayoutProps) {
   const { state, dispatch } = useAppContext();
   const {
     searchIntent,
     activeFilters,
     isPanelOpen,
+    hoveredHotelId,
+    hoverSource,
+    hotels
   } = state;
+
+  // Ref for the scrollable container
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to the hovered hotel when hovering on map
+  useEffect(() => {
+    if (hoveredHotelId && hoverSource === 'map' && scrollContainerRef.current && isPanelOpen) {
+      const hotelElement = scrollContainerRef.current.querySelector(`[data-hotel-id="${hoveredHotelId}"]`);
+      if (hotelElement) {
+        hotelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [hoveredHotelId, hoverSource, isPanelOpen]);
 
   const handlePanelToggle = () => {
     dispatch({ type: 'SET_PANEL_OPEN', payload: !isPanelOpen });
@@ -31,7 +46,7 @@ function DesktopLayout({ hotels, showSkeletons, isLoadingQuery }: DesktopLayoutP
     dispatch({ type: 'LOCATION_SELECTED', payload: feature });
   }, [dispatch]);
 
-  const currentCityNameForSearch = searchIntent.rawMapboxFeature?.placeName || searchIntent.searchTerm || '';
+  const currentCityNameForSearch = searchIntent.originalSelectedFeature?.placeName || searchIntent.searchTerm || '';
 
   return (
     <>
@@ -57,9 +72,9 @@ function DesktopLayout({ hotels, showSkeletons, isLoadingQuery }: DesktopLayoutP
             initialValue={currentCityNameForSearch}
           />
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-2">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-2">
           <HotelListPanel
-            hotels={hotels}
+            hotels={hotels || []}
             onHotelSelect={(hotel) => dispatch({ type: 'HOTEL_SELECTED', payload: { id: hotel.id, source: 'list' } })}
             isMobile={false}
             activeFilters={activeFilters as Filters}
@@ -88,7 +103,7 @@ function DesktopLayout({ hotels, showSkeletons, isLoadingQuery }: DesktopLayoutP
       </aside>
 
       <div className="absolute inset-0 z-10">
-        <MapWrapper hotels={hotels} showSkeletons={showSkeletons} />
+        <MapWrapper />
       </div>
     </>
   );

@@ -112,29 +112,32 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
         {hotels.map(hotel => {
           if (typeof hotel.lng !== 'number' || typeof hotel.lat !== 'number') return null;
 
-          // Determine if this marker is the one that the map is specifically focused on due to a search match or hover action.
-          const isExplicitlyFocusedByMapState = (
-              highlightType === 'match_found' || highlightType === 'hover_focus'
-            ) && hotel.id === highlightHotelId;
+          // Determine if the map considers this hotel as the primary target due to search or explicit focus state.
+          const isTargetedBySearchOrExplicitFocus = 
+            (highlightType === 'match_found' || highlightType === 'hover_focus') && 
+            hotel.id === highlightHotelId;
 
-          // Determine if this marker is active based on UI interaction (map hover or sidebar hover)
-          const isActiveByUIHover = 
-            hotel.id === hoveredHotelId;
+          // Determine if this marker is being actively hovered by the mouse.
+          const isActivelyHovered = hotel.id === hoveredHotelId;
+          
+          // A hotel is considered "focused" if it's the target of a search/explicit focus OR actively hovered.
+          // Active hover takes precedence for focus styling if it's different from the search target.
+          const isFocused = isActivelyHovered || (hoveredHotelId === null && isTargetedBySearchOrExplicitFocus);
 
-          const isFocused = isExplicitlyFocusedByMapState || isActiveByUIHover;
+          // Determine if *any* hotel is considered focused (either by hover or by search match being the primary highlightType).
+          const isAnyHotelConsideredFocused = 
+            hoveredHotelId !== null || 
+            (highlightType === 'match_found' && highlightHotelId !== null);
 
-          // A marker is dimmed if *any* marker is considered active/focused, but this one isn't.
-          const isAnyHotelFocused = 
-            hoveredHotelId !== null;
-
-          const isDimmed = isAnyHotelFocused && !isFocused;
+          // A marker is dimmed if any hotel is considered focused, but this specific marker isn't the one in focus.
+          const isDimmed = isAnyHotelConsideredFocused && !isFocused;
 
           return (
             <Marker
               key={hotel.id}
               longitude={hotel.lng}
               latitude={hotel.lat}
-              style={{ zIndex: isFocused ? 100 : 10 }}
+              style={{ zIndex: isFocused ? 100 : 10 }} // Focused markers get higher z-index
             >
               <HotelMarker
                 hotel={hotel}
@@ -142,8 +145,8 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
                 onClick={() => handleMarkerClick(hotel)}
                 onMouseEnter={() => handleMarkerMouseEnter(hotel.id)}
                 onMouseLeave={handleMarkerMouseLeave}
-                isFocused={isFocused}
-                isDimmed={isDimmed}
+                isFocused={isFocused} // Pass the refined isFocused state
+                isDimmed={isDimmed}  // Pass the refined isDimmed state
               />
             </Marker>
           );

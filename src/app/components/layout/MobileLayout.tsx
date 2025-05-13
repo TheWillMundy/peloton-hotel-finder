@@ -5,26 +5,25 @@ import BottomSheet, { BottomSheetHandle, BottomSheetState } from '@/app/componen
 import FilterPanel from '@/app/components/filter/FilterPanel';
 import FilterModal from '@/app/components/filter/FilterModal';
 import { cn } from '@/lib/utils';
-import type { ClientHotel } from '@/lib/pelotonAPI';
 
 // Dynamically imported CitySearchInput (to match page.tsx)
 import dynamic from 'next/dynamic';
 const CitySearchInput = dynamic(() => import('@/app/components/search/CitySearchInput'), { ssr: false });
 
 interface MobileLayoutProps {
-  hotels: ClientHotel[];
   isFetching: boolean;
   showSkeletons: boolean;
 }
 
 const MOBILE_SEARCH_BAR_HEIGHT = 60;
 
-function MobileLayout({ hotels, isFetching, showSkeletons }: MobileLayoutProps) {
+function MobileLayout({ isFetching, showSkeletons }: MobileLayoutProps) {
   const { state, dispatch } = useAppContext();
   const {
     searchIntent,
     activeFilters,
     isPanelOpen,
+    hotels
   } = state;
 
   const [showFiltersModal, setShowFiltersModal] = useState(false);
@@ -45,7 +44,7 @@ function MobileLayout({ hotels, isFetching, showSkeletons }: MobileLayoutProps) 
   }, [dispatch, isPanelOpen]);
 
   const initialSheetStateForMobile = isPanelOpen ? 'peek' : 'closed';
-  const currentCityNameForSearch = searchIntent.rawMapboxFeature?.placeName || searchIntent.searchTerm || '';
+  const currentCityNameForSearch = searchIntent.originalSelectedFeature?.placeName || searchIntent.searchTerm || '';
 
   return (
     <>
@@ -72,7 +71,7 @@ function MobileLayout({ hotels, isFetching, showSkeletons }: MobileLayoutProps) 
         ref={bottomSheetRef}
         initialState={initialSheetStateForMobile}
         onStateChange={handleBottomSheetStateChange}
-        hotels={hotels}
+        hotels={hotels || []}
         showSkeletons={showSkeletons}
         onHotelSelect={(hotel) => dispatch({ type: 'HOTEL_SELECTED', payload: { id: hotel.id, source: 'list' } })}
         hasSearched={!!searchIntent.location}
@@ -84,7 +83,7 @@ function MobileLayout({ hotels, isFetching, showSkeletons }: MobileLayoutProps) 
         "absolute inset-0 z-10",
         `top-[${MOBILE_SEARCH_BAR_HEIGHT}px]`
       )}>
-        <MapWrapper hotels={hotels} showSkeletons={showSkeletons} />
+        <MapWrapper />
       </div>
 
       <FilterModal
