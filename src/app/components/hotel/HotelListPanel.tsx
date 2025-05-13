@@ -3,6 +3,7 @@
 import React from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/hotel/HotelCard';
+import HotelCardSkeleton from '@/app/components/hotel/HotelCardSkeleton';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 import FilterPanel from '@/app/components/filter/FilterPanel';
 import type { Filters } from '@/app/components/filter/FilterChips';
@@ -14,7 +15,9 @@ const HotelListPanel = ({
   isMobile = false,
   activeFilters,
   onFiltersChange,
-  onMobileFilterButtonClick
+  onMobileFilterButtonClick,
+  hasSearched = false,
+  showSkeletons = false
 }: {
   onHotelSelect: (hotel: ClientHotel) => void;
   hotels: ClientHotel[];
@@ -22,15 +25,72 @@ const HotelListPanel = ({
   activeFilters: Filters;
   onFiltersChange: (newFilters: Filters) => void;
   onMobileFilterButtonClick: () => void;
+  hasSearched?: boolean;
+  showSkeletons?: boolean;
 }) => {
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
 
   const hasActiveFilters = activeFilters.inRoom || activeFilters.inGym || activeFilters.loyaltyPrograms.length > 0;
 
-  if (hotels.length === 0 && !hasActiveFilters) {
+  // Show skeletons during loading
+  if (showSkeletons) {
+    return (
+      <div className="p-4 space-y-3">
+        {!isMobile && (
+          <FilterPanel
+            activeFilters={activeFilters}
+            onFiltersChange={onFiltersChange}
+          />
+        )}
+        
+        {isMobile && (
+          <div className="pb-3">
+            <FilterPanel
+              isMobile
+              activeFilters={activeFilters}
+              onFiltersChange={onMobileFilterButtonClick}
+            />
+          </div>
+        )}
+        
+        <div className="text-sm text-gray-500 py-2">
+          Searching for hotels...
+        </div>
+        
+        <HotelCardSkeleton />
+        <HotelCardSkeleton />
+        <HotelCardSkeleton />
+      </div>
+    );
+  }
+
+  if (hotels.length === 0) {
+    if (hasActiveFilters) {
+      return (
+        <div className="text-center text-gray-500 py-4">
+          <p>No hotels match your current filters.</p>
+          <button 
+            className="text-primary text-sm font-medium mt-1"
+            onClick={() => onFiltersChange({ inRoom: false, inGym: false, loyaltyPrograms: [] })}
+          >
+            Clear all filters
+          </button>
+        </div>
+      );
+    }
+    
+    if (hasSearched) {
+      return (
+        <div className="p-4 text-center text-gray-500">
+          <p>No hotels with Peloton bikes found in this area.</p>
+          <p className="text-sm mt-1">Try searching for a different city or hotel.</p>
+        </div>
+      );
+    }
+    
     return (
       <div className="p-4 text-center text-gray-500">
-        <p>No hotels to display for this area yet, or try searching a city.</p>
+        <p>Welcome to Peloton Hotel Finder! Search for a city or hotel to find Peloton bikes nearby.</p>
       </div>
     );
   }
@@ -65,29 +125,17 @@ const HotelListPanel = ({
         )}
 
         {/* Hotel List */}
-        {hotels.length > 0 ? (
-          hotels.map(hotel => (
-            <HotelCard 
-              key={hotel.id} 
-              hotel={hotel} 
-              onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
-              onClick={() => onHotelSelect(hotel)}
-              isHovered={hotel.id === uiState.activeHotelId}
-              isAnyHovered={uiState.activeHotelId !== null}
-              isMobile={isMobile}
-            />
-          ))
-        ) : (
-          <div className="text-center text-gray-500 py-4">
-            <p>No hotels match your current filters.</p>
-            <button 
-              className="text-primary text-sm font-medium mt-1"
-              onClick={() => onFiltersChange({ inRoom: false, inGym: false, loyaltyPrograms: [] })}
-            >
-              Clear all filters
-            </button>
-          </div>
-        )}
+        {hotels.map(hotel => (
+          <HotelCard 
+            key={hotel.id} 
+            hotel={hotel} 
+            onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
+            onClick={() => onHotelSelect(hotel)}
+            isHovered={hotel.id === uiState.activeHotelId}
+            isAnyHovered={uiState.activeHotelId !== null}
+            isMobile={isMobile}
+          />
+        ))}
       </div>
     </>
   );

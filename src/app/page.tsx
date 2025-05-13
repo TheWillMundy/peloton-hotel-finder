@@ -7,7 +7,8 @@ import dynamic from 'next/dynamic';
 // Third-party library imports
 import { ChevronLeft } from 'lucide-react';
 import type { Map as MapboxMapType } from 'mapbox-gl';
-import { useQuery } from '@tanstack/react-query';
+import { LngLatBounds } from 'mapbox-gl';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 // Context imports
 import { SearchProvider, useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
@@ -32,6 +33,7 @@ import type { Filters } from '@/app/components/filter/FilterChips';
 
 // Type imports
 import type { ClientHotel } from '@/lib/pelotonAPI';
+import type { MapboxGeocodingFeature } from '@/app/components/search/CitySearchInput';
 
 // Utility imports
 import { cn, cubicBezier } from '@/lib/utils';
@@ -84,11 +86,9 @@ function HotelSearchPageContent() {
     loyaltyPrograms: [],
   });
   
-  const { searchContextState, handleLocationRetrieved } = useSearch();
+  const { searchContextState, handleLocationRetrieved: handleLocationRetrievedFromContext } = useSearch();
   const { currentIntent, needsFreshHotels } = searchContextState;
 
-  // Local state for the cityBbox returned by the API, for potential reuse
-  const [apiProvidedCityBbox, setApiProvidedCityBbox] = useState<string | null>(null);
   // Selected hotel for the modal (distinct from selectedHotelNameForQuery in intent)
   const [selectedHotelForModal, setSelectedHotelForModal] = useState<ClientHotel | null>(null);
 
@@ -102,10 +102,15 @@ function HotelSearchPageContent() {
   const mapRef = useRef<MapboxMapType | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
-  const [currentBottomSheetState, setCurrentBottomSheetState] = useState<BottomSheetState>('closed');
   const bottomSheetRef = useRef<BottomSheetHandle | null>(null);
 
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
+
+  const [userSetZoomLevel, setUserSetZoomLevel] = useState<number | null>(null);
+
+  // State for "Search this area" button
+  const [showSearchAreaButton, setShowSearchAreaButton] = useState(false);
+  const [lastSearchedMapBounds, setLastSearchedMapBounds] = useState<string | null>(null);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
@@ -116,7 +121,9 @@ function HotelSearchPageContent() {
 
   const { 
     data: apiResponse, 
-    isLoading: isLoadingHotels, 
+    isLoading,
+    isFetching,
+    isPlaceholderData,
     isError: isFetchError, 
     error: fetchError,
     isSuccess: isFetchSuccess,
@@ -127,7 +134,7 @@ function HotelSearchPageContent() {
       currentIntent.location?.lng,
       currentIntent.searchType,
       currentIntent.selectedHotelNameForQuery, // Part of key if it's a hotel search
-      needsFreshHotels // Important for cache busting/API cache behavior
+      // needsFreshHotels // Consider if this is still needed or if queryKey changes suffice
     ],
     queryFn: async () => {
       if (!currentIntent.location) return { hotels: [], cityBbox: null }; // Default empty response
@@ -148,18 +155,19 @@ function HotelSearchPageContent() {
       }
       
       // Use the API-provided bbox from PREVIOUS call if available and not a "fresh" request for this intent
-      if (apiProvidedCityBbox && !needsFreshHotels) {
-        apiUrl += `&cityBbox=${encodeURIComponent(apiProvidedCityBbox)}`;
+      if (lastSearchedMapBounds && !needsFreshHotels) {
+        // Now using lastSearchedMapBounds (simple string format) if not a fresh search
+        apiUrl += `&cityBbox=${encodeURIComponent(lastSearchedMapBounds)}`;
       } else if (currentIntent.mapboxFeatureBbox && !needsFreshHotels) {
-        // If it's not a fresh search and no apiProvidedCityBbox, but current intent has mapbox one (e.g. first city search)
+        // If it's not a fresh search and no lastSearchedMapBounds, but current intent has mapbox one (e.g. first city search)
         apiUrl += `&cityBbox=${encodeURIComponent(currentIntent.mapboxFeatureBbox)}`;
       }
 
       console.log('[HotelsQuery] fetching', { 
         apiUrl,
         isHotelSearchQuery: currentIntent.searchType === 'hotel',
-        reusingApiBbox: !!(apiProvidedCityBbox && !needsFreshHotels),
-        reusingMapboxBbox: !!(currentIntent.mapboxFeatureBbox && !needsFreshHotels && !apiProvidedCityBbox)
+        reusingApiBbox: !!(lastSearchedMapBounds && !needsFreshHotels),
+        reusingMapboxBbox: !!(currentIntent.mapboxFeatureBbox && !needsFreshHotels && !lastSearchedMapBounds)
       });
 
       const response = await fetch(apiUrl);
@@ -180,95 +188,171 @@ function HotelSearchPageContent() {
     },
     enabled: !!currentIntent.location, // Only run query if a location is part of the intent
     retry: 1,
-    placeholderData: (previousData) => previousData, // Keep previous data while loading new
+    placeholderData: keepPreviousData, // Use TanStack Query's keepPreviousData
+    staleTime: 5 * 60 * 1000, // Keep data fresh for 5 minutes
   });
 
+  // Derive the loading state for skeletons
+  // Show skeletons if:
+  // 1. It's the initial load for this query key (isLoading)
+  // 2. It's fetching a new query's data but showing old data as placeholder (isFetching && isPlaceholderData)
+  const showSkeletons = isLoading || (isFetching && isPlaceholderData);
+  
   // Extracted data from apiResponse for consumption by UI
   const hotelsFromApi = useMemo(() => apiResponse?.hotels || [], [apiResponse]);
   const matchedHotelFromApi = useMemo(() => apiResponse?.matchedHotel, [apiResponse]);
 
+  // Wrapper function to reset zoom on *any* new location retrieval from search input
+  const handleNewSearchLocation = useCallback((feature: MapboxGeocodingFeature) => {
+    handleLocationRetrievedFromContext(feature);
+    setUserSetZoomLevel(null); // Explicitly reset user zoom
+    setShowSearchAreaButton(false); // Hide button on new search
+    if (feature.mapboxBbox && feature.mapboxBbox.length > 0) {
+      setLastSearchedMapBounds(feature.mapboxBbox.join(',')); // Join array to string
+    } else {
+      // If no bbox from feature, nullify. API response will set it if available.
+      setLastSearchedMapBounds(null); 
+    }
+  }, [handleLocationRetrievedFromContext]);
+
+  // Callback for MapboxMap to report user-initiated zoom
+  const handleUserZoomChange = useCallback((zoom: number) => {
+    setUserSetZoomLevel(zoom);
+  }, []);
+
   // Handle successful API response: update apiProvidedCityBbox and mapFocusState
   useEffect(() => {
     if (isFetchSuccess && apiResponse) {
+      let processedApiCityBboxForLastSearched: string | null = null;
+
       if (apiResponse.cityBbox) {
-        setApiProvidedCityBbox(apiResponse.cityBbox);
+        // Attempt to process apiResponse.cityBbox into "swLng,swLat,neLng,neLat" for lastSearchedMapBounds
+        if (typeof apiResponse.cityBbox === 'string') {
+          if (apiResponse.cityBbox.includes('{') && apiResponse.cityBbox.includes('coords')) {
+            try {
+              const parsedBbox = JSON.parse(apiResponse.cityBbox);
+              // Assuming coords is [[sw_lng, sw_lat], [nw_lng, nw_lat], [ne_lng, ne_lat], [se_lng, se_lat]]
+              // We need sw (coords[0]) and ne (coords[2])
+              if (parsedBbox.coords && Array.isArray(parsedBbox.coords) && parsedBbox.coords.length >= 3 && 
+                  Array.isArray(parsedBbox.coords[0]) && parsedBbox.coords[0].length === 2 &&
+                  Array.isArray(parsedBbox.coords[2]) && parsedBbox.coords[2].length === 2) {
+                const sw = parsedBbox.coords[0]; // [lat, lng]
+                const ne = parsedBbox.coords[2]; // [lat, lng]
+                // Construct the string as "swLng,swLat,neLng,neLat"
+                processedApiCityBboxForLastSearched = `${sw[1]},${sw[0]},${ne[1]},${ne[0]}`;
+              } else {
+                console.warn("[Search this area] API cityBbox was JSON but had an unexpected structure:", apiResponse.cityBbox);
+              }
+            } catch (e) {
+              console.warn("[Search this area] Failed to parse API cityBbox as JSON:", apiResponse.cityBbox, e);
+            }
+          } else {
+            // Does not look like JSON, try to validate if it's a simple "lng,lat,lng,lat" string
+            const parts = apiResponse.cityBbox.split(',');
+            if (parts.length === 4 && parts.every(part => !isNaN(parseFloat(part)))) {
+              processedApiCityBboxForLastSearched = apiResponse.cityBbox;
+            } else {
+              console.warn("[Search this area] API cityBbox was not JSON and not a valid simple bbox string:", apiResponse.cityBbox);
+            }
+          }
+        } else {
+          console.warn("[Search this area] API cityBbox was not a string:", apiResponse.cityBbox);
+        }
       }
 
+      // Set lastSearchedMapBounds based on processed API bbox or intent's bbox
+      if (processedApiCityBboxForLastSearched) {
+        setLastSearchedMapBounds(processedApiCityBboxForLastSearched);
+      } else if (!apiResponse.cityBbox && currentIntent.mapboxFeatureBbox && needsFreshHotels) {
+        // Fallback to intent's bbox if API provided no bbox at all, AND this is a fresh search triggered by intent
+        setLastSearchedMapBounds(currentIntent.mapboxFeatureBbox);
+      } else if (apiResponse.cityBbox && !processedApiCityBboxForLastSearched) {
+        // API provided a cityBbox, but we couldn't process it into the simple format.
+        // Set to null to prevent errors in handleMoveEnd.
+        console.warn(`[Search this area] API cityBbox ('${apiResponse.cityBbox}') was unusable for lastSearchedMapBounds. Setting to null.`);
+        setLastSearchedMapBounds(null);
+      }
+      // If apiResponse.cityBbox was null/undefined, and the 'else if' for currentIntent didn't match,
+      // lastSearchedMapBounds is NOT updated by this block, retaining its previous value (e.g. from a filter change).
+
+      setShowSearchAreaButton(false); // Hide button after a successful search (or if bounds are now null)
+
       // Update mapFocusState based on API response
+      // Check if the current search was initiated by the 'Search this area' button
+      const isMapDragSearch = currentIntent.rawMapboxFeature?.category === 'map_drag_search';
+
       if (currentIntent.searchType === 'hotel') {
         if (apiResponse.matchedHotel && apiResponse.matchedHotel.id) {
-          // Hotel Match Found - update mapFocusState to focus on matched hotel
           setMapFocusState({
             type: 'match_found',
             centerCoordinates: [apiResponse.matchedHotel.lng, apiResponse.matchedHotel.lat],
-            zoomLevel: ZOOM_LEVELS.HOTEL,
+            zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.HOTEL,
             focusedHotelId: apiResponse.matchedHotel.id
           });
           setActiveHotel(apiResponse.matchedHotel.id, 'initial_match');
         } else if (apiResponse.searchedPoinLocation) {
-          // POI Searched, No Peloton Match Found - update mapFocusState for "no match" display
           setMapFocusState({
             type: 'poi_no_match',
             centerCoordinates: [apiResponse.searchedPoinLocation.lng, apiResponse.searchedPoinLocation.lat],
-            zoomLevel: ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
+            zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
             searchTermDisplay: apiResponse.searchedPoinLocation.name
           });
           clearActiveHotel();
         } else {
-          // No Hotel Match Found for a specific hotel search, and no specific POI info returned by API
           if (currentIntent.location && currentIntent.searchTerm) {
             setMapFocusState({
               type: 'poi_no_match',
               centerCoordinates: [currentIntent.location.lng, currentIntent.location.lat],
-              zoomLevel: ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
+              zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.NO_MATCH_CITY_OVERVIEW,
               searchTermDisplay: currentIntent.searchTerm
             });
             clearActiveHotel();
           }
         }
-      } else {
-        // City Search (not a specific hotel search)
-        // Update mapFocusState to show city overview
+      } else { // City Search (or map_drag_search which we treat like a city search here)
         setMapFocusState({
           type: 'city_overview',
-          centerCoordinates: apiResponse.cityCenter || DEFAULT_CENTER,
-          zoomLevel: ZOOM_LEVELS.CITY
+          // Use the intent's location if it was a map drag search, otherwise use API center
+          centerCoordinates: isMapDragSearch && currentIntent.location 
+            ? [currentIntent.location.lng, currentIntent.location.lat]
+            : apiResponse.cityCenter || DEFAULT_CENTER,
+          zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.CITY, // Use user's zoom if set
+          focusedHotelId: null, // Ensure focus is cleared
+          searchTermDisplay: null
         });
-        clearActiveHotel();
+        clearActiveHotel(); // Ensure no hotel is highlighted from previous state
       }
-
     } else if (isFetchError && fetchError) {
       console.error("Failed to fetch hotels:", fetchError.message);
       // hotelsFromApi will be an empty array due to its memoized default.
     }
-  }, [isFetchSuccess, apiResponse, isFetchError, fetchError, currentIntent.searchType, currentIntent.location, currentIntent.searchTerm, isMobile, currentBottomSheetState, setActiveHotel, clearActiveHotel]);
+  }, [isFetchSuccess, apiResponse, isFetchError, fetchError, currentIntent, setActiveHotel, clearActiveHotel, userSetZoomLevel, needsFreshHotels]);
 
   // Reset states when the core search location in the intent changes significantly
   useEffect(() => {
-    if (needsFreshHotels) { // This flag is set in SearchContext when location changes significantly
-        setApiProvidedCityBbox(null); // Clear any bbox from a previous city
-        setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] });
-        setShowFilters(false);
-        setSelectedHotelForModal(null); // Clear modal for any new search
-        
-        // Reset map focus to idle (will be updated once API response comes in)
-        setMapFocusState({
-          type: 'idle',
-          centerCoordinates: currentIntent.location ? 
-            [currentIntent.location.lng, currentIntent.location.lat] : 
-            DEFAULT_CENTER,
-          zoomLevel: DEFAULT_ZOOM
-        });
+    // Only reset map focus/zoom if it's a new search *not* triggered by 'Search this area'
+    if (needsFreshHotels && currentIntent.rawMapboxFeature?.category !== 'map_drag_search') { 
+      setUserSetZoomLevel(null); // Reset user zoom on new significant search
+      setMapFocusState({
+        type: 'idle',
+        centerCoordinates: currentIntent.location ? 
+          [currentIntent.location.lng, currentIntent.location.lat] : 
+          DEFAULT_CENTER,
+        zoomLevel: ZOOM_LEVELS.COUNTRY // Start with a default or country zoom
+      });
     }
-    // When a new location is set (even if not "fresh"), always clear the modal
-    // to avoid showing details from a previous search context.
     if (currentIntent.location) {
       setSelectedHotelForModal(null);
+      // If it's a new search, reset user zoom so app defaults can take over
+      if (needsFreshHotels) setUserSetZoomLevel(null);
     }
-
-  }, [currentIntent.location, needsFreshHotels]);
+  }, [currentIntent.location, needsFreshHotels, currentIntent.rawMapboxFeature?.category]);
 
   const displayedHotels = useMemo(() => {
+    // If showing skeletons, return empty array immediately to prevent rendering stale cards
+    if (showSkeletons) {
+      return [];
+    }
     // Start with all hotels and apply active filters
     let filtered = [...hotelsFromApi];
     if (activeFilters.loyaltyPrograms.length > 0) {
@@ -303,7 +387,7 @@ function HotelSearchPageContent() {
       }
     }
     return filtered;
-  }, [hotelsFromApi, activeFilters, currentIntent.searchType, matchedHotelFromApi]);
+  }, [hotelsFromApi, activeFilters, currentIntent.searchType, matchedHotelFromApi, showSkeletons]);
 
   // Unified hover processing for both map and sidebar
   const processHotelHover = useCallback((id: number | null, source: 'sidebar' | 'map', coords?: { lng: number; lat: number }) => {
@@ -315,7 +399,7 @@ function HotelSearchPageContent() {
           type: 'hover_focus',
           focusedHotelId: id,
           centerCoordinates: [coords.lng, coords.lat],
-          zoomLevel: prev.zoomLevel
+          zoomLevel: ZOOM_LEVELS.HOTEL
         }));
       }
     } else {
@@ -346,7 +430,7 @@ function HotelSearchPageContent() {
         setActiveHotel(hotel.id, 'sidebar_hover');
         
         // Then handle location retrieval (which may trigger other state changes)
-        handleLocationRetrieved({
+        handleLocationRetrievedFromContext({
           lat: hotel.lat,
           lng: hotel.lng,
           placeName: hotel.name,
@@ -367,7 +451,7 @@ function HotelSearchPageContent() {
           setSelectedHotelForModal(hotel);
           bottomSheetRef.current?.snapToState('closed'); // Close sheet to give modal focus
         } else { // Tapped a *different* marker on the map
-          handleLocationRetrieved({
+          handleLocationRetrievedFromContext({
             lat: hotel.lat,
             lng: hotel.lng,
             placeName: hotel.name,
@@ -383,7 +467,7 @@ function HotelSearchPageContent() {
       // Desktop behavior: open modal
       setSelectedHotelForModal(hotel);
     }
-  }, [isMobile, handleLocationRetrieved, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState]);
+  }, [isMobile, handleLocationRetrievedFromContext, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState]);
 
   useEffect(() => {
     if (mapRef.current && mapReady && !initialPaddingSet) {
@@ -392,9 +476,6 @@ function HotelSearchPageContent() {
         if (isPanelOpen) { 
           const peekVh = 25;
           PADDING_BOTTOM = (peekVh * window.innerHeight) / 100;
-          setCurrentBottomSheetState('peek');
-        } else {
-          setCurrentBottomSheetState('closed');
         }
       }
       // Calculate sidebar width based on window width
@@ -420,7 +501,6 @@ function HotelSearchPageContent() {
     const newIsOpen = !isPanelOpen;
     setIsPanelOpen(newIsOpen);
     if (isMobile) {
-      setCurrentBottomSheetState(newIsOpen ? 'peek' : 'closed');
     } else {
       if (mapRef.current && mapReady) {
         // Calculate sidebar width based on window width
@@ -434,7 +514,6 @@ function HotelSearchPageContent() {
   };
 
   const handleBottomSheetStateChange = useCallback((newState: BottomSheetState, heightPx: number) => {
-    setCurrentBottomSheetState(newState);
     if (mapRef.current && mapReady && isMobile) {
       const basePadding = { left: 0, right: 0, top: MOBILE_SEARCH_BAR_HEIGHT };
       mapRef.current.easeTo({ padding: { ...basePadding, bottom: heightPx }, duration: 300, easing: cubicBezier(0.4, 0, 0.2, 1) });
@@ -451,19 +530,14 @@ function HotelSearchPageContent() {
       if (activeHotel) {
         setMapFocusState(prev => ({
           ...prev,
-          type: 'hover_focus', // Can use 'hover_focus' or a more specific type if needed
+          type: 'hover_focus',
           centerCoordinates: [activeHotel.lng, activeHotel.lat],
-          // Optionally adjust zoom, or keep previous zoom:
-          // zoom: ZOOM_LEVELS.HOTEL, 
+          zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.HOTEL, // Respect user zoom
           focusedHotelId: activeHotel.id
         }));
       }
     }
-    // If interactionSource is no longer sidebar_hover, or activeHotelId is null,
-    // we don't necessarily revert the map focus here, as other interactions might take precedence
-    // or the user might have manually panned.
-    // The map will naturally update based on subsequent searches or explicit map interactions.
-  }, [uiState.activeHotelId, uiState.interactionSource, displayedHotels, setMapFocusState]);
+  }, [uiState.activeHotelId, uiState.interactionSource, displayedHotels, setMapFocusState, userSetZoomLevel]); // Added userSetZoomLevel
 
   // Scroll-to-view logic - ensure this only runs for map_hover or initial_match to avoid conflicts
   useEffect(() => {
@@ -487,6 +561,113 @@ function HotelSearchPageContent() {
 
   const currentCityNameForSearch = currentIntent.rawMapboxFeature?.placeName || currentIntent.searchTerm || '';
 
+  const handleSearchThisArea = useCallback(() => {
+    if (!mapRef.current) return;
+
+    const currentZoom = mapRef.current.getZoom();
+    setUserSetZoomLevel(currentZoom); // Set user zoom BEFORE context update
+
+    const center = mapRef.current.getCenter();
+    const currentBounds = mapRef.current.getBounds();
+    if (!currentBounds) return; // Add null check
+
+    const boundsArray = currentBounds.toArray(); 
+    const flatBoundsArray = boundsArray.flat(); // This will be number[]
+    const boundsString = flatBoundsArray.join(',');
+
+    // Adding back the second argument now that SearchContext is updated
+    handleLocationRetrievedFromContext({ 
+      lat: center.lat,
+      lng: center.lng,
+      placeName: "Current map area", // Generic name for this type of search
+      mapboxBbox: flatBoundsArray as [number, number, number, number], // Assert as tuple
+      featureType: 'place', 
+      category: 'map_drag_search', // Custom category for this interaction
+      hotelName: undefined,
+    }, true); // true indicates needsFreshHotels
+
+    setShowSearchAreaButton(false);
+    setLastSearchedMapBounds(boundsString); // Update bounds for the new search
+
+  }, [handleLocationRetrievedFromContext, setUserSetZoomLevel, mapRef]);
+
+  // Effect to detect map movement and show "Search this area" button
+  useEffect(() => {
+    const map = mapRef.current; // Capture map instance
+    if (!mapReady || !map) { 
+      setShowSearchAreaButton(false); // Ensure it's hidden if conditions not met
+      return;
+    }
+
+    const handleMoveEnd = () => {
+      if (isLoading || isFetching || showSkeletons || !lastSearchedMapBounds) {
+        setShowSearchAreaButton(false);
+        return;
+      }
+      
+      // Don't show button if map is focused on a specific hotel match, hover, or POI no match
+      if (mapFocusState.type === 'match_found' || mapFocusState.type === 'hover_focus' || mapFocusState.type === 'poi_no_match') {
+          setShowSearchAreaButton(false);
+          return;
+      }
+
+      try {
+        const boundsParts = lastSearchedMapBounds.split(',').map(Number);
+        if (boundsParts.length !== 4 || boundsParts.some(isNaN)) {
+            console.warn("Invalid lastSearchedMapBounds format:", lastSearchedMapBounds);
+            setShowSearchAreaButton(false);
+            return;
+        }
+        const [swLng, swLat, neLng, neLat] = boundsParts;
+        // Use LngLatBounds from mapbox-gl import
+        const previousBounds = new LngLatBounds([swLng, swLat], [neLng, neLat]); 
+        
+        const currentMapCenter = map.getCenter();
+        const currentMapBounds = map.getBounds(); // Get bounds for the check
+
+        // Ensure currentMapBounds is not null before accessing methods
+        if (!currentMapBounds) {
+            setShowSearchAreaButton(false);
+            return;
+        }
+
+        // Condition 1: View extends beyond previous bounds.
+        const viewExceedsPrevious = !(previousBounds.contains(currentMapBounds.getSouthWest()) && previousBounds.contains(currentMapBounds.getNorthEast()));
+
+        let centerMovedSignificantly = false;
+        if (!viewExceedsPrevious) { // Only check center movement if view is still contained
+            const previousCenter = previousBounds.getCenter();
+            const currentViewportLngSpan = currentMapBounds.getEast() - currentMapBounds.getWest();
+            const currentViewportLatSpan = currentMapBounds.getNorth() - currentMapBounds.getSouth();
+            
+            // Threshold: moved by 30% of current viewport's dimension
+            const lngMoveThreshold = currentViewportLngSpan * 0.30;
+            const latMoveThreshold = currentViewportLatSpan * 0.30;
+
+            if (Math.abs(currentMapCenter.lng - previousCenter.lng) > lngMoveThreshold ||
+                Math.abs(currentMapCenter.lat - previousCenter.lat) > latMoveThreshold) {
+                centerMovedSignificantly = true;
+            }
+        }
+
+        if (viewExceedsPrevious || centerMovedSignificantly) {
+          setShowSearchAreaButton(true);
+        } else {
+          setShowSearchAreaButton(false); 
+        }
+
+      } catch (error) {
+        console.error("Error processing map bounds for search area button:", error);
+        setShowSearchAreaButton(false);
+      }
+    };
+
+    map.on('moveend', handleMoveEnd);
+    return () => {
+      map.off('moveend', handleMoveEnd);
+    };
+  }, [mapReady, mapRef, isLoading, isFetching, showSkeletons, lastSearchedMapBounds, mapFocusState.type]);
+
   return (
     <div className="relative h-screen w-full overflow-hidden bg-gray-100">
       {isMobile && (
@@ -494,11 +675,11 @@ function HotelSearchPageContent() {
           <div className="w-full max-w-md pointer-events-auto flex items-center gap-2">
             <div className="flex-1">
               <CitySearchInput
-                onLocationRetrieved={handleLocationRetrieved} // Directly from useSearch()
+                onLocationRetrieved={handleNewSearchLocation}
                 onNoResultsFound={() => {}}
-                isLoading={isLoadingHotels} 
+                isLoading={isFetching}
                 className="bg-white p-3 rounded-xl shadow-xl w-full"
-                initialValue={currentCityNameForSearch} // Use derived city name
+                initialValue={currentCityNameForSearch}
               />
             </div>
             <FilterPanel
@@ -526,9 +707,9 @@ function HotelSearchPageContent() {
             isPanelOpen && 'pr-14' 
           )}>
             <CitySearchInput
-              onLocationRetrieved={handleLocationRetrieved}
+              onLocationRetrieved={handleNewSearchLocation}
               onNoResultsFound={() => {}}
-              isLoading={isLoadingHotels} 
+              isLoading={isFetching}
               className="w-full" 
               initialValue={currentCityNameForSearch}
             />
@@ -541,6 +722,8 @@ function HotelSearchPageContent() {
               activeFilters={activeFilters}
               onFiltersChange={setActiveFilters}
               onMobileFilterButtonClick={() => {}}
+              hasSearched={!!currentIntent.location}
+              showSkeletons={showSkeletons}
             />
           </div>
 
@@ -571,6 +754,10 @@ function HotelSearchPageContent() {
           initialState={initialSheetStateForMobile}
           onStateChange={handleBottomSheetStateChange}
           onHotelSelect={(hotel) => handleHotelSelect(hotel, 'list')}
+          hasSearched={!!currentIntent.location}
+          hasActiveFilters={activeFilters.inRoom || activeFilters.inGym || activeFilters.loyaltyPrograms.length > 0}
+          onClearFilters={() => setActiveFilters({ inRoom: false, inGym: false, loyaltyPrograms: [] })}
+          showSkeletons={showSkeletons}
         />
       )}
 
@@ -586,6 +773,7 @@ function HotelSearchPageContent() {
           isMobile={isMobile}
           onMarkerHover={handleMapMarkerHover}
           mapReady={mapReady}
+          onUserZoom={handleUserZoomChange}
           mapFocusProps={{
             center: mapFocusState.centerCoordinates,
             zoom: mapFocusState.zoomLevel,
@@ -614,6 +802,25 @@ function HotelSearchPageContent() {
             setShowFilters(false);
           }}
         />
+      )}
+
+      {/* "Search this area" Button - Render on mobile and desktop */}
+      {showSearchAreaButton && (
+        <div className={cn(
+          "absolute z-30 pointer-events-auto",
+          isMobile ? "top-[15vh]" : "top-[2vh]", // Adjust top for mobile search bar (60px + 16px padding)
+          // Center within map area (right 2/3 if panel open, full width if closed or mobile)
+          isPanelOpen && !isMobile ? "left-[66.66%] -translate-x-1/2" : "left-1/2 -translate-x-1/2"
+        )}>
+          <Button
+            onClick={handleSearchThisArea}
+            variant="secondary"
+            className="bg-background/95 hover:bg-background/80 text-foreground font-semibold py-2 px-4 border border-border rounded-full shadow-xl backdrop-blur-sm"
+            disabled={isLoading || isFetching}
+          >
+            Search this area
+          </Button>
+        </div>
       )}
     </div>
   );

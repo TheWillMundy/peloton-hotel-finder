@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/hotel/HotelCard';
+import HotelCardSkeleton from '@/app/components/hotel/HotelCardSkeleton';
 import { cn } from '@/lib/utils';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 
@@ -22,6 +23,10 @@ interface BottomSheetProps {
   initialState?: BottomSheetState; // Parent can suggest initial state
   onStateChange?: (newState: BottomSheetState, currentHeightPx: number) => void;
   onHotelSelect: (hotel: ClientHotel) => void;
+  hasSearched?: boolean; // Add this prop to differentiate between initial state and after search
+  hasActiveFilters?: boolean; // Add this prop to check if filters are active
+  onClearFilters?: () => void; // Add this prop to clear filters
+  showSkeletons?: boolean; // Renamed from isLoading and isNewSearch
 }
 
 const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
@@ -30,6 +35,10 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
     initialState = 'closed',
     onStateChange,
     onHotelSelect,
+    hasSearched = false,
+    hasActiveFilters = false,
+    onClearFilters = () => {},
+    showSkeletons = false, // Renamed prop
   }, 
   ref
 ) => {
@@ -204,8 +213,16 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
           className="overflow-y-auto p-4 bottom-sheet-content" 
           style={{ height: `calc(100% - ${HANDLE_AREA_HEIGHT_PX}px)` }}
         >
-          {/* Show filtered results count if hotels are filtered */}
-          {hotels.length > 0 ? (
+          {showSkeletons ? (
+            <div className="space-y-3">
+              <div className="text-sm text-gray-500 py-2">
+                Searching for hotels...
+              </div>
+              <HotelCardSkeleton />
+              <HotelCardSkeleton />
+              <HotelCardSkeleton />
+            </div>
+          ) : hotels.length > 0 ? (
             <div className="space-y-3">
               {hotels.map(hotel => (
                 <HotelCard
@@ -219,10 +236,25 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
                 />
               ))}
             </div>
-          ) : (
+          ) : hasActiveFilters ? (
             <div className="text-center text-gray-500 py-8">
               <p>No hotels match your current filters.</p>
-              <p className="text-sm">Try adjusting your filters or searching a different city.</p>
+              <button 
+                className="text-primary text-sm font-medium mt-1"
+                onClick={onClearFilters}
+              >
+                Clear all filters
+              </button>
+            </div>
+          ) : hasSearched ? (
+            <div className="text-center text-gray-500 py-8">
+              <p>No hotels with Peloton bikes found in this area.</p>
+              <p className="text-sm">Try searching for a different city or hotel.</p>
+            </div>
+          ) : (
+            <div className="text-center text-gray-500 py-8">
+              <p>Welcome to Peloton Hotel Finder!</p>
+              <p className="text-sm">Search for a city or hotel to find Peloton bikes nearby.</p>
             </div>
           )}
         </div>

@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import Map, { Marker, MapRef, ViewStateChangeEvent } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { ClientHotel } from '@/lib/pelotonAPI';
-import { useSearch, ZOOM_LEVELS } from '@/app/contexts/SearchContext';
+import { ZOOM_LEVELS } from '@/app/contexts/SearchContext';
 import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
 import HotelMarker from '@/app/components/map/HotelMarker';
 import SearchResultMarker from '@/app/components/map/SearchResultMarker';
@@ -28,6 +28,7 @@ interface MapboxMapProps {
   onMarkerHover?: (hotelId: number | null, hotelCoords?: { lng: number, lat: number }) => void;
   mapReady?: boolean; // New prop from page.tsx
   mapFocusProps: MapFocusProps; // Consolidated props replacing individual location/zoom props
+  onUserZoom?: (zoom: number) => void; // New callback prop
 }
 
 const MapboxMap: React.FC<MapboxMapProps> = ({ 
@@ -38,7 +39,8 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   isMobile = false, 
   onMarkerHover,
   mapReady = true,
-  mapFocusProps
+  mapFocusProps,
+  onUserZoom,
 }) => {
   // Refs
   const internalMapRef = useRef<MapRef>(null);
@@ -46,12 +48,13 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   const lastCenterRef = useRef<[number, number] | null>(null);
   
   // Contexts
-  const { searchContextState } = useSearch();
-  const { zoom: contextZoom } = searchContextState;
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
 
   // Extract values from mapFocusProps for easier access
   const { center: mapCenter, zoom: mapZoom, highlightType, highlightHotelId } = mapFocusProps;
+
+  // Flag to track programmatic movement
+  const isProgrammaticMoveRef = useRef(false);
 
   // Clear any pending operations on unmount
   useEffect(() => {
@@ -75,11 +78,8 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       return;
     }
     
-    // Store the last location change time to avoid competing animations
+    isProgrammaticMoveRef.current = true; // Set flag before programmatic move
     const mapInstance = internalMapRef.current;
-    (mapInstance as any)._lastLocationChangeTime = performance.now();
-    
-    // Use native flyTo method
     mapInstance.flyTo({
       center: mapCenter,
       zoom: mapZoom,
@@ -91,29 +91,14 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
       } : {})
     });
     
-    // Update the last center reference
+    // Reset flag after animation likely completes
+    // Adjust timing if needed
+    setTimeout(() => {
+      isProgrammaticMoveRef.current = false;
+    }, 1200); 
+    
     lastCenterRef.current = mapCenter;
   }, [mapCenter, mapZoom, highlightType, mapReady, isMobile]);
-
-  // Handle zoom changes from context
-  useEffect(() => {
-    if (!internalMapRef.current || !mapReady || internalMapRef.current.getZoom() === contextZoom) return;
-    
-    const mapInstance = internalMapRef.current;
-    const lastLocationChangeTime = (mapInstance as any)._lastLocationChangeTime || 0;
-    const timeSinceLocationChange = performance.now() - lastLocationChangeTime;
-    
-    // Don't compete with recent location changes
-    if (lastLocationChangeTime && timeSinceLocationChange < 1200) {
-      return;
-    }
-    
-    // Use easeTo for smoother zoom transitions
-    mapInstance.easeTo({ 
-      zoom: contextZoom, 
-      duration: 500 
-    });
-  }, [contextZoom, mapReady]);
 
   // Handlers for marker interactions
   const handleMarkerClick = useCallback((hotel: ClientHotel) => {
@@ -155,12 +140,13 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
     if (onMapLoad) onMapLoad();
   }, [externalMapRef, onMapLoad, mapCenter]);
 
-  // Handle view state change (e.g., from user interaction)
-  const handleViewStateChange = useCallback((evt: ViewStateChangeEvent) => {
-    // Update lastCenterRef when the user moves the map
-    const { longitude, latitude } = evt.viewState;
-    lastCenterRef.current = [longitude, latitude];
-  }, []);
+  // Handler for zoom end
+  const handleZoomEnd = useCallback((evt: ViewStateChangeEvent) => {
+    // Only update if the move wasn't programmatic
+    if (!isProgrammaticMoveRef.current) {
+      onUserZoom?.(evt.viewState.zoom);
+    }
+  }, [onUserZoom]);
 
   return (
     <div className="mapbox-map-container" style={{ width: '100%', height: '100%' }}>
@@ -177,7 +163,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
         mapStyle="mapbox://styles/mapbox/light-v11"
         onLoad={handleMapLoad}
         onMouseLeave={handleMapMouseLeave}
-        onMove={handleViewStateChange}
+        onZoomEnd={handleZoomEnd}
       >
         {mapReady && hotels.map(hotel => {
           if (typeof hotel.lng !== 'number' || typeof hotel.lat !== 'number') return null;

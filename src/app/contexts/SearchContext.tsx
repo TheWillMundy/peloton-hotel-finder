@@ -7,10 +7,10 @@ import type { MapboxGeocodingFeature } from '@/app/components/search/CitySearchI
 // Assuming ZOOM_LEVELS is still relevant or defined elsewhere, e.g., a new constants file or locally if only used here
 // For now, let's define it here if not imported
 export const ZOOM_LEVELS = {
-  CITY: 12.5,
+  CITY: 14,
   DISTRICT: 14,
   HOTEL: 16,
-  NO_MATCH_CITY_OVERVIEW: 13, // New zoom level, same as city for now
+  NO_MATCH_CITY_OVERVIEW: 14, // New zoom level, same as city for now
   COUNTRY: 4.5 // Adding default country-level zoom
 };
 import { calculateDistance } from '@/lib/utils';
@@ -31,7 +31,6 @@ export interface SearchIntent {
 // Modified SearchContextState
 export interface SearchContextState {
   currentIntent: SearchIntent;
-  zoom: number;
   needsFreshHotels: boolean; // If the next query for the currentIntent should be fresh
   // cityNameForDisplay is removed, can be derived from currentIntent.rawMapboxFeature.placeName or currentIntent.searchTerm
 }
@@ -40,10 +39,10 @@ interface SearchContextType {
   searchContextState: SearchContextState;
   setSearchIntent: (intent: SearchIntent) => void; // Main way to update search parameters
   clearSearch: () => void; // Renamed from clearSearchIntent for clarity
-  setZoom: (zoom: number) => void;
+  // setZoom is removed
   // setNeedsFreshHotels is now managed internally by setSearchIntent based on location changes
   // setIsLoading is removed, will be handled by TanStack Query in page.tsx
-  handleLocationRetrieved: (feature: MapboxGeocodingFeature) => void;
+  handleLocationRetrieved: (feature: MapboxGeocodingFeature, forceFresh?: boolean) => void;
   // setCityName, setSelectedHotel, setMatchedHotelId, setHotels are removed
   // setCityBbox (for API response bbox) is removed
   // setLocation (direct) is removed, intent.location is used
@@ -63,7 +62,6 @@ const SearchContext = createContext<SearchContextType | undefined>(undefined);
 
 export function SearchProvider({ children }: { children: ReactNode }) {
   const [currentIntent, setCurrentIntentState] = useState<SearchIntent>(initialIntent);
-  const [zoom, setZoom] = useState<number>(ZOOM_LEVELS.CITY);
   const [needsFreshHotels, setNeedsFreshHotels] = useState(false);
   const [lastMajorLocation, setLastMajorLocation] = useState<{lat: number; lng: number} | null>(null);
 
@@ -85,23 +83,15 @@ export function SearchProvider({ children }: { children: ReactNode }) {
       setLastMajorLocation(intent.location);
     }
     setNeedsFreshHotels(freshRequired);
-
-    // Adjust zoom based on search type
-    if (intent.searchType === 'city') {
-      setZoom(ZOOM_LEVELS.CITY);
-    } else if (intent.searchType === 'hotel') {
-      setZoom(ZOOM_LEVELS.HOTEL);
-    }
   };
 
   const clearSearch = () => {
     setCurrentIntentState(initialIntent);
-    setZoom(ZOOM_LEVELS.CITY);
     setNeedsFreshHotels(false);
     setLastMajorLocation(null);
   };
 
-  const handleLocationRetrieved = (feature: MapboxGeocodingFeature) => {
+  const handleLocationRetrieved = (feature: MapboxGeocodingFeature, forceFresh: boolean = false) => {
     const isHotelSearch = feature.featureType === 'poi';
     const newSearchType: SearchType = isHotelSearch ? 'hotel' : 'city';
 
@@ -114,15 +104,18 @@ export function SearchProvider({ children }: { children: ReactNode }) {
       rawMapboxFeature: feature,
     };
     setSearchIntent(newIntent);
+    // Explicitly set needsFreshHotels if forceFresh is true
+    if (forceFresh) {
+        setNeedsFreshHotels(true);
+    }
     // isLoading and other direct data states are now handled by useQuery in page.tsx
   };
 
   return (
     <SearchContext.Provider value={{
-      searchContextState: { currentIntent, zoom, needsFreshHotels },
+      searchContextState: { currentIntent, needsFreshHotels },
       setSearchIntent,
       clearSearch,
-      setZoom,
       handleLocationRetrieved,
     }}>
       {children}
