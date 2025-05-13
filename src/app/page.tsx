@@ -416,50 +416,64 @@ function HotelSearchPageContent() {
   const handleCloseModal = useCallback(() => setSelectedHotelForModal(null), []);
 
   const handleHotelSelect = useCallback((hotel: ClientHotel, source: 'list' | 'map' = 'list') => {
+    // Always update the active hotel in the UI state first
+    if (source === 'list' && isMobile) {
+      setActiveHotel(hotel.id, 'list_click');
+    } else if (source === 'map' && isMobile) {
+      setActiveHotel(hotel.id, 'map_hover'); // Or keep map_hover if preferred
+    } else {
+      // Handle desktop or other cases if needed, maybe set active hotel too
+    }
+    
     if (isMobile) {
-      if (source === 'list') { // Tap from BottomSheet or other list components
-        // First update map focus state directly to ensure it stays focused
-        setMapFocusState({
-          type: 'match_found', // Using match_found to ensure consistent behavior
-          centerCoordinates: [hotel.lng, hotel.lat],
-          zoomLevel: ZOOM_LEVELS.HOTEL,
-          focusedHotelId: hotel.id
-        });
-        
-        // Explicitly set active hotel ID for mobile list selection
-        setActiveHotel(hotel.id, 'sidebar_hover');
-        
-        // Then handle location retrieval (which may trigger other state changes)
-        handleLocationRetrievedFromContext({
-          lat: hotel.lat,
-          lng: hotel.lng,
-          placeName: hotel.name,
-          hotelName: hotel.name,
-          mapboxBbox: undefined,
-          featureType: 'poi',
-          category: '',
-        });
+      if (source === 'list') { // Tap from BottomSheet
+        const targetCoords: [number, number] = [hotel.lng, hotel.lat];
+        const targetZoom = ZOOM_LEVELS.HOTEL;
+        const targetType = 'match_found';
+        const targetId = hotel.id;
+
+        // Only update map focus if it's different from the current state
+        if (
+          mapFocusState.type !== targetType ||
+          mapFocusState.focusedHotelId !== targetId ||
+          mapFocusState.zoomLevel !== targetZoom ||
+          Math.abs(mapFocusState.centerCoordinates[0] - targetCoords[0]) > 0.000001 ||
+          Math.abs(mapFocusState.centerCoordinates[1] - targetCoords[1]) > 0.000001
+        ) {
+            console.log("[handleHotelSelect - list] Updating map focus state");
+            setMapFocusState({
+              type: targetType,
+              centerCoordinates: targetCoords,
+              zoomLevel: targetZoom,
+              focusedHotelId: targetId
+            });
+        } else {
+             console.log("[handleHotelSelect - list] Skipping map focus state update - already focused");
+        }
         
         bottomSheetRef.current?.snapToState('peek');
         
-        // Ensure active hotel state persists after location change
-        setTimeout(() => {
-          setActiveHotel(hotel.id, 'sidebar_hover');
-        }, 100);
       } else { // source === 'map' (Tap on map marker)
-        if (hotel.id === uiState.activeHotelId) { // Tapped the currently focused/selected or API matched hotel marker
+        // Check if this marker is already the active and focused one (second tap)
+        const isAlreadyCentered = 
+          hotel.id === uiState.activeHotelId && 
+          mapFocusState.focusedHotelId === hotel.id && 
+          mapFocusState.type === 'match_found';
+          
+        if (isAlreadyCentered) {
+          // Second tap on already centered marker - show modal
           setSelectedHotelForModal(hotel);
-          bottomSheetRef.current?.snapToState('closed'); // Close sheet to give modal focus
-        } else { // Tapped a *different* marker on the map
-          handleLocationRetrievedFromContext({
-            lat: hotel.lat,
-            lng: hotel.lng,
-            placeName: hotel.name,
-            hotelName: hotel.name,
-            mapboxBbox: undefined,
-            featureType: 'poi',
-            category: '',
+          bottomSheetRef.current?.snapToState('peek'); // Ensure sheet remains at peek
+        } else {
+          // First tap on marker - just center it
+          setMapFocusState({
+            type: 'match_found',
+            centerCoordinates: [hotel.lng, hotel.lat],
+            zoomLevel: ZOOM_LEVELS.HOTEL,
+            focusedHotelId: hotel.id
           });
+          
+          setActiveHotel(hotel.id, 'map_hover');
           bottomSheetRef.current?.snapToState('peek');
         }
       }
@@ -467,7 +481,7 @@ function HotelSearchPageContent() {
       // Desktop behavior: open modal
       setSelectedHotelForModal(hotel);
     }
-  }, [isMobile, handleLocationRetrievedFromContext, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState]);
+  }, [isMobile, bottomSheetRef, uiState.activeHotelId, setActiveHotel, setMapFocusState, mapFocusState]);
 
   useEffect(() => {
     if (mapRef.current && mapReady && !initialPaddingSet) {
@@ -528,22 +542,41 @@ function HotelSearchPageContent() {
     if (uiState.interactionSource === 'sidebar_hover' && uiState.activeHotelId !== null) {
       const activeHotel = displayedHotels.find(h => h.id === uiState.activeHotelId);
       if (activeHotel) {
-        setMapFocusState(prev => ({
-          ...prev,
-          type: 'hover_focus',
-          centerCoordinates: [activeHotel.lng, activeHotel.lat],
-          zoomLevel: userSetZoomLevel ?? ZOOM_LEVELS.HOTEL, // Respect user zoom
-          focusedHotelId: activeHotel.id
-        }));
+        const targetCoords: [number, number] = [activeHotel.lng, activeHotel.lat];
+        const targetZoom = userSetZoomLevel ?? ZOOM_LEVELS.HOTEL;
+        const targetType = 'hover_focus';
+        const targetId = activeHotel.id;
+        
+        // Only update map focus if it's different from the current state
+        if (
+          mapFocusState.type !== targetType ||
+          mapFocusState.focusedHotelId !== targetId ||
+          mapFocusState.zoomLevel !== targetZoom ||
+          Math.abs(mapFocusState.centerCoordinates[0] - targetCoords[0]) > 0.000001 ||
+          Math.abs(mapFocusState.centerCoordinates[1] - targetCoords[1]) > 0.000001
+        ) {
+            console.log("[useEffect - hover] Updating map focus state");
+            setMapFocusState({
+              type: targetType,
+              centerCoordinates: targetCoords,
+              zoomLevel: targetZoom,
+              focusedHotelId: targetId
+            });
+        } else {
+             console.log("[useEffect - hover] Skipping map focus state update - already focused");
+        }
       }
     }
-  }, [uiState.activeHotelId, uiState.interactionSource, displayedHotels, setMapFocusState, userSetZoomLevel]); // Added userSetZoomLevel
+  }, [uiState.activeHotelId, uiState.interactionSource, displayedHotels, setMapFocusState, userSetZoomLevel, mapFocusState]); // Use whole mapFocusState object
 
   // Scroll-to-view logic - ensure this only runs for map_hover or initial_match to avoid conflicts
   useEffect(() => {
     if (uiState.activeHotelId === null) return;
-    // Only scroll if interaction came from map or was an initial match to prevent scroll fights with sidebar hover
-    if (uiState.interactionSource === 'map_hover' || uiState.interactionSource === 'initial_match') {
+    // Only scroll if interaction came from map, was an initial match, or a mobile list click
+    if (uiState.interactionSource === 'map_hover' || 
+        uiState.interactionSource === 'initial_match' || 
+        (isMobile && uiState.interactionSource === 'list_click')
+    ) {
         const scrollDelay = isMobile ? 300 : 50;
         setTimeout(() => {
           const hotelCard = document.querySelector(`[data-hotel-id="${uiState.activeHotelId}"]`);
@@ -552,7 +585,10 @@ function HotelSearchPageContent() {
             ? document.querySelector('.bottom-sheet-content')
             : document.querySelector('.overflow-y-auto');
           if (!scrollContainer) return;
-          hotelCard.scrollIntoView({ behavior: 'smooth', block: isMobile ? 'start' : 'center' });
+          // For mobile list clicks, always scroll to start. For map hovers on mobile, also start.
+          // For desktop, center is fine.
+          const blockPosition = isMobile ? 'start' : 'center';
+          hotelCard.scrollIntoView({ behavior: 'smooth', block: blockPosition });
         }, scrollDelay);
     }
   }, [uiState.activeHotelId, uiState.interactionSource, isMobile]); // Added interactionSource

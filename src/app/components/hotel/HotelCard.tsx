@@ -58,48 +58,66 @@ const HotelCard: React.FC<HotelCardProps> = ({
     }
   };
 
+  // Get marker style based on hotel data
+  const getMarkerStyle = () => {
+    if (hotel.total_bikes && hotel.total_bikes > 0) {
+      if (hotel.in_room) {
+        return 'bg-in-room-marker';
+      } else if (hotel.total_bikes >= 3) {
+        return 'bg-many-bikes-marker';
+      } else {
+        return 'bg-few-bikes-marker';
+      }
+    } else {
+      return 'bg-no-bikes-marker';
+    }
+  };
+
   return (
     <div 
       className={cn(
         "bg-white border rounded-lg p-3 transition-all duration-300 cursor-pointer relative",
         !isMobile && isHovered 
-          ? "shadow-lg bg-blue-50/50 z-10 opacity-100 scale-[1.02]"
+          ? "shadow-lg bg-background/5 z-10 opacity-100 scale-[1.02]"
           : !isMobile && isAnyHovered 
-            ? "border-gray-200 hover:shadow-md hover:border-gray-300 opacity-70"
-            : "border-gray-200 hover:shadow-md hover:border-gray-300 opacity-100"
+            ? "border-border hover:shadow-md hover:border-border/70 opacity-70"
+            : "border-border hover:shadow-md hover:border-border/70 opacity-100"
       )}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
       data-hotel-id={hotel.id}
     >
-      {/* Blue vertical line on the right when hovered */}
+      {/* Accent marker on the right when hovered */}
       {!isMobile && isHovered && (
-        <div className="absolute top-0 bottom-0 right-0 w-2 bg-blue-500 rounded-r-lg"></div>
+        <div className="absolute top-0 bottom-0 right-0 w-2 bg-in-room-marker rounded-r-lg"></div>
       )}
       <div className="flex items-start gap-3">
-        {/* Bike Count Circle - moved to left */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-          <span className="text-blue-700 font-semibold">{hotel.total_bikes}</span>
+        {/* Bike Count Circle - matching our marker styles */}
+        <div className={cn(
+          "flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold shadow-sm",
+          getMarkerStyle()
+        )}>
+          {hotel.total_bikes}
         </div>
         
         <div className="flex-1 min-w-0">
           {/* Hotel Name */}
-          <h3 className="text-base font-semibold text-gray-800 leading-tight truncate" title={hotel.name}>
+          <h3 className="text-base font-semibold text-foreground leading-tight truncate" title={hotel.name}>
             {hotel.name}
           </h3>
           
           {/* Loyalty Program Badge (if available) */}
           {(hotel.loyaltyProgram && hotel.loyaltyProgram !== "Other") ? (
-            <Badge variant="outline" className="mt-1 text-xs bg-gray-50">
+            <Badge variant="outline" className="mt-1 text-xs bg-background/5">
               {hotel.loyaltyProgram}
             </Badge>
           ) : hotel.brand ? (
-             <Badge variant="outline" className="mt-1 text-xs bg-gray-50">
-              {hotel.brand} {/* Fallback to original brand if loyaltyProgram is Other or not specific */}
+             <Badge variant="outline" className="mt-1 text-xs bg-background/5">
+              {hotel.brand}
             </Badge>
           ): (
-            <Badge variant="outline" className="mt-1 text-xs border-dashed border-gray-300 bg-gray-50 text-gray-500">
+            <Badge variant="outline" className="mt-1 text-xs border-dashed border-border/70 bg-background/5 text-muted-foreground">
               Independent
             </Badge>
           )}
@@ -108,21 +126,31 @@ const HotelCard: React.FC<HotelCardProps> = ({
 
       {/* All indicators and features in one line */}
       <div className="flex items-center gap-3 mt-3 flex-wrap">
-        {/* Location Indicators */}
-        <div className="flex items-center text-xs">
+        {/* Location Indicators - Improved for better distinction */}
+        <div className={cn(
+          "flex items-center text-xs px-2 py-1 rounded-full",
+          hotel.in_gym 
+            ? "bg-few-bikes-marker text-white" 
+            : "bg-background/5 text-muted-foreground/60"
+        )}>
           <div className={cn(
             "w-2 h-2 rounded-full mr-1.5",
-            hotel.in_gym ? "bg-green-500" : "bg-red-300"
+            hotel.in_gym ? "bg-white" : "bg-no-bikes-marker/40"
           )}></div>
-          <span>Gym</span>
+          <span className={hotel.in_gym ? "" : "line-through"}>Gym</span>
         </div>
         
-        <div className="flex items-center text-xs">
+        <div className={cn(
+          "flex items-center text-xs px-2 py-1 rounded-full",
+          hotel.in_room 
+            ? "bg-in-room-marker text-white" 
+            : "bg-background/5 text-muted-foreground/60"
+        )}>
           <div className={cn(
             "w-2 h-2 rounded-full mr-1.5",
-            hotel.in_room ? "bg-green-500" : "bg-red-300"
+            hotel.in_room ? "bg-white" : "bg-no-bikes-marker/40"
           )}></div>
-          <span>Room</span>
+          <span className={hotel.in_room ? "" : "line-through"}>Room</span>
         </div>
 
         {/* Feature Icons with tooltips */}
@@ -134,7 +162,7 @@ const HotelCard: React.FC<HotelCardProps> = ({
                 <div 
                   key={feature}
                   title={tooltip}
-                  className="inline-flex items-center justify-center bg-gray-100 rounded-full h-5 px-2 text-xs"
+                  className="inline-flex items-center justify-center bg-background/5 rounded-full h-5 px-2 text-xs"
                 >
                   <span className="mr-1">{icon}</span>
                   <span className="text-xs">{feature}</span>

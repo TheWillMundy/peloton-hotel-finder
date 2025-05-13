@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 
-export type UIInteractionSource = 'initial_match' | 'map_hover' | 'sidebar_hover' | 'none';
+export type UIInteractionSource = 'initial_match' | 'map_hover' | 'sidebar_hover' | 'list_click' | 'none';
 
 interface UIInteractionState {
   activeHotelId: number | null;

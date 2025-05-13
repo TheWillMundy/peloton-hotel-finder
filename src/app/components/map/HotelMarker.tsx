@@ -22,65 +22,57 @@ const HotelMarker: React.FC<HotelMarkerProps> = ({
   isFocused,
   isDimmed
 }) => {
-  // Calculate styles based on hotel data and interaction state
-  const getMarkerStyles = () => {
-    // Base styles for the wrapper element
-    const wrapperStyles: React.CSSProperties = {
-      cursor: 'pointer',
-      transform: isFocused && !isMobile ? 'scale(1.2)' : 'scale(1)',
-      zIndex: isFocused ? 10 : 1,
-      transition: 'transform 0.25s ease-out',
-    };
-
-    // Base styles for the inner element (the circle)
-    const innerStyles: React.CSSProperties = {
-      width: "40px",
-      height: "40px",
-      borderRadius: "50%",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      color: "white",
-      fontWeight: "bold",
-      fontSize: "15px",
-      boxShadow: isFocused ? '0 5px 10px rgba(0,0,0,0.4)' : '0 3px 6px rgba(0,0,0,0.15)',
-      border: "2px solid white",
-      transition: "transform 0.25s ease-out, box-shadow 0.25s ease-out, opacity 0.3s ease-in-out",
-      opacity: isDimmed ? 0.65 : 1,
-    };
-
-    // Set background and border color based on hotel data
+  // Get marker type and label based on hotel data
+  const getMarkerDetails = () => {
     if (hotel.total_bikes && hotel.total_bikes > 0) {
       if (hotel.in_room) {
-        innerStyles.backgroundColor = "#4A90E2";
-        innerStyles.borderColor = "rgba(74, 144, 226, 0.5)";
+        return {
+          colorClass: 'bg-in-room-marker',
+          label: hotel.total_bikes.toString(),
+          hoverScale: 'scale-120'
+        };
       } else if (hotel.total_bikes >= 3) {
-        innerStyles.backgroundColor = "#58B794";
-        innerStyles.borderColor = "rgba(88, 183, 148, 0.5)";
+        return {
+          colorClass: 'bg-many-bikes-marker',
+          label: hotel.total_bikes.toString(),
+          hoverScale: 'scale-115'
+        };
       } else {
-        innerStyles.backgroundColor = "#F5BD41";
-        innerStyles.borderColor = "rgba(245, 189, 65, 0.5)";
+        return {
+          colorClass: 'bg-few-bikes-marker',
+          label: hotel.total_bikes.toString(),
+          hoverScale: 'scale-110'
+        };
       }
     } else {
-      innerStyles.backgroundColor = "#9AA1B1";
-      innerStyles.borderColor = "rgba(154, 161, 177, 0.5)";
+      return {
+        colorClass: 'bg-no-bikes-marker',
+        label: "P",
+        hoverScale: 'scale-105'
+      };
     }
-
-    return { wrapperStyles, innerStyles };
   };
 
-  const { wrapperStyles, innerStyles } = getMarkerStyles();
+  const { colorClass, label, hoverScale } = getMarkerDetails();
 
   return (
     <div 
-      style={wrapperStyles}
+      className={`cursor-pointer transition-all duration-300 ease-out ${isFocused && !isMobile ? hoverScale : 'scale-100'} ${isFocused ? 'z-10' : 'z-1'}`}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       data-hotel-id={hotel.id}
     >
-      <div style={innerStyles}>
-        {hotel.total_bikes && hotel.total_bikes > 0 ? hotel.total_bikes : "P"}
+      <div className={`relative flex h-[42px] w-[42px] items-center justify-center rounded-full 
+        text-white font-bold text-base ${colorClass}
+        ${isFocused 
+          ? 'shadow-[0_0_0_2px_white,0_6px_16px_rgba(0,0,0,0.2),0_0_0_6px_rgba(255,255,255,0.2)]' 
+          : 'shadow-[0_0_0_2px_white,0_4px_8px_rgba(0,0,0,0.1)]'}
+        ${isDimmed ? 'opacity-60' : 'opacity-100'}
+        transition-all duration-300 ease-out`}
+      >
+        {isFocused && <div className="absolute inset-0 rounded-full animate-marker-pulse opacity-0" />}
+        <div className="relative z-[2] text-shadow">{label}</div>
       </div>
     </div>
   );

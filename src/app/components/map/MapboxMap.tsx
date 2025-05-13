@@ -46,6 +46,7 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   const internalMapRef = useRef<MapRef>(null);
   const isMountedRef = useRef(true);
   const lastCenterRef = useRef<[number, number] | null>(null);
+  const lastZoomRef = useRef<number | null>(null);
   
   // Contexts
   const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
@@ -68,36 +69,41 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
   useEffect(() => {
     if (!internalMapRef.current || !mapReady) return;
     
-    const shouldSkipFlyTo = 
-      highlightType === 'hover_focus' && 
-      lastCenterRef.current && 
-      lastCenterRef.current[0].toFixed(6) === mapCenter[0].toFixed(6) && 
-      lastCenterRef.current[1].toFixed(6) === mapCenter[1].toFixed(6);
-    
-    if (shouldSkipFlyTo) {
-      return;
+    const mapInstance = internalMapRef.current.getMap();
+
+    const needsMobilePadding = isMobile && (highlightType === 'hover_focus' || highlightType === 'match_found');
+    const currentPaddingTop = mapInstance.getPadding().top;
+    const paddingChanged = (needsMobilePadding && currentPaddingTop !== 80) || (!needsMobilePadding && currentPaddingTop !== 0);
+
+    const COORD_TOLERANCE = 0.000001;
+    const targetCenterChanged = 
+      !lastCenterRef.current || 
+      Math.abs(lastCenterRef.current[0] - mapCenter[0]) > COORD_TOLERANCE || 
+      Math.abs(lastCenterRef.current[1] - mapCenter[1]) > COORD_TOLERANCE;
+      
+    const targetZoomChanged = mapZoom !== lastZoomRef.current;
+
+    if (targetCenterChanged || paddingChanged || targetZoomChanged) {
+      console.log('[Map flyTo] Triggering animation (Revised)', { targetCenterChanged, paddingChanged, targetZoomChanged });
+      isProgrammaticMoveRef.current = true; 
+      mapInstance.flyTo({
+        center: mapCenter,
+        zoom: mapZoom,
+        essential: true,
+        duration: 1000,
+        padding: needsMobilePadding ? { top: 80, bottom: 0, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 }
+      });
+      
+      lastCenterRef.current = mapCenter; 
+      lastZoomRef.current = mapZoom;
+      
+      setTimeout(() => {
+        isProgrammaticMoveRef.current = false;
+      }, 1200); 
+    } else {
+       console.log('[Map flyTo] Skipping animation - target state unchanged (Revised)');
     }
-    
-    isProgrammaticMoveRef.current = true; // Set flag before programmatic move
-    const mapInstance = internalMapRef.current;
-    mapInstance.flyTo({
-      center: mapCenter,
-      zoom: mapZoom,
-      essential: true,
-      duration: 1000,
-      // Add padding options for mobile to position markers better
-      ...((isMobile && highlightType === 'hover_focus') ? {
-        padding: { top: 25, bottom: 0, left: 0, right: 0 }
-      } : {})
-    });
-    
-    // Reset flag after animation likely completes
-    // Adjust timing if needed
-    setTimeout(() => {
-      isProgrammaticMoveRef.current = false;
-    }, 1200); 
-    
-    lastCenterRef.current = mapCenter;
+
   }, [mapCenter, mapZoom, highlightType, mapReady, isMobile]);
 
   // Handlers for marker interactions
@@ -135,10 +141,10 @@ const MapboxMap: React.FC<MapboxMapProps> = ({
     if (externalMapRef) {
       externalMapRef.current = event.target;
     }
-    // Store initial center
-    lastCenterRef.current = mapCenter;
+    lastCenterRef.current = mapCenter; 
+    lastZoomRef.current = mapZoom;
     if (onMapLoad) onMapLoad();
-  }, [externalMapRef, onMapLoad, mapCenter]);
+  }, [externalMapRef, onMapLoad, mapCenter, mapZoom]);
 
   // Handler for zoom end
   const handleZoomEnd = useCallback((evt: ViewStateChangeEvent) => {

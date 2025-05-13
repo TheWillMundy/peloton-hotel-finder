@@ -52,8 +52,23 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
       interactive: true,
     });
 
-    // Add hotel marker
-    new mapboxgl.Marker({ color: '#007bff' })
+    // Get marker color based on hotel data
+    const getMarkerColor = () => {
+      if (hotel.total_bikes && hotel.total_bikes > 0) {
+        if (hotel.in_room) {
+          return 'oklch(0.55 0.25 25)'; // Peloton red for in-room bikes
+        } else if (hotel.total_bikes >= 3) {
+          return 'oklch(0.5 0.15 340)'; // Deep burgundy for many bikes
+        } else {
+          return 'oklch(0.6 0.06 300)'; // Muted purple for few bikes
+        }
+      } else {
+        return 'oklch(0.55 0.02 0)'; // Dark gray for no bikes
+      }
+    };
+
+    // Add hotel marker with appropriate color
+    new mapboxgl.Marker({ color: getMarkerColor() })
       .setLngLat([hotel.lng, hotel.lat])
       .addTo(mapRef.current);
 
@@ -95,14 +110,14 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div 
         className={cn(
-          "bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col",
+          "bg-background rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col",
           className
         )}
       >
         {/* Header */}
-        <div className="p-5 border-b flex justify-between items-start">
+        <div className="p-5 border-b border-border flex justify-between items-start">
           <div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-1">{hotel.name}</h2>
+            <h2 className="text-2xl font-bold text-foreground mb-1">{hotel.name}</h2>
             {(hotel.loyaltyProgram && hotel.loyaltyProgram !== "Other") ? (
               <Badge variant="outline" className="text-sm">
                 {hotel.loyaltyProgram}
@@ -120,7 +135,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
           <Button
             variant="ghost" 
             size="icon"
-            className="hover:bg-gray-100 rounded-full"
+            className="hover:bg-background/10 rounded-full"
             onClick={onClose}
           >
             <X className="h-5 w-5" />
@@ -130,7 +145,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
         <div className="overflow-y-auto p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Map */}
-            <div className="h-64 md:h-80 rounded-lg overflow-hidden border">
+            <div className="h-64 md:h-80 rounded-lg overflow-hidden border border-border">
               <div ref={mapContainerRef} className="w-full h-full" />
             </div>
             
@@ -139,31 +154,39 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
               {/* Basic Info */}
               <div className="grid grid-cols-1 gap-3">
                 <div className="flex items-center">
-                  <Bike className="h-5 w-5 mr-2 text-blue-600" />
+                  <div className={cn(
+                    "h-8 w-8 rounded-full mr-3 flex items-center justify-center text-white",
+                    hotel.in_room ? "bg-in-room-marker" : 
+                    hotel.total_bikes >= 3 ? "bg-many-bikes-marker" : 
+                    hotel.total_bikes > 0 ? "bg-few-bikes-marker" : "bg-no-bikes-marker"
+                  )}>
+                    <Bike className="h-5 w-5" />
+                  </div>
                   <span className="text-lg font-medium">
                     {hotel.total_bikes} Peloton Bike{hotel.total_bikes !== 1 ? 's' : ''}
                   </span>
                 </div>
                 
-                <div className="flex items-start">
+                <div className="flex items-start gap-3">
+                  {/* Updated Gym/Room indicators to match card style */}
                   <div className={cn(
-                    "flex items-center mr-6",
+                    "flex items-center px-3 py-1.5 rounded-full",
                     hotel.in_gym 
-                      ? "text-green-700 font-medium" 
-                      : "text-gray-400"
+                      ? "bg-few-bikes-marker text-white font-medium" 
+                      : "bg-background/5 text-muted-foreground/60"
                   )}>
-                    <MapPin className="h-5 w-5 mr-1.5" />
-                    <span>In Gym</span>
+                    <MapPin className={cn("h-5 w-5 mr-1.5", hotel.in_gym ? "text-white" : "opacity-50")} />
+                    <span className={hotel.in_gym ? "" : "line-through"}>In Gym</span>
                   </div>
                   
                   <div className={cn(
-                    "flex items-center",
+                    "flex items-center px-3 py-1.5 rounded-full",
                     hotel.in_room 
-                      ? "text-purple-700 font-medium" 
-                      : "text-gray-400"
+                      ? "bg-in-room-marker text-white font-medium" 
+                      : "bg-background/5 text-muted-foreground/60"
                   )}>
-                    <BedDouble className="h-5 w-5 mr-1.5" />
-                    <span>In Room</span>
+                    <BedDouble className={cn("h-5 w-5 mr-1.5", hotel.in_room ? "text-white" : "opacity-50")} />
+                    <span className={hotel.in_room ? "" : "line-through"}>In Room</span>
                   </div>
                 </div>
               </div>
@@ -171,7 +194,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
               {/* Features */}
               {hotel.bike_features && hotel.bike_features.length > 0 && (
                 <div className="mt-4">
-                  <h3 className="text-sm text-gray-500 font-medium mb-2 flex items-center">
+                  <h3 className="text-sm text-muted-foreground font-medium mb-2 flex items-center">
                     <ListChecks className="mr-1.5 h-4 w-4" />
                     Bike Features
                   </h3>
@@ -182,7 +205,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
                         <div 
                           key={feature}
                           title={tooltip} // Add tooltip here
-                          className="flex items-center px-3 py-1.5 bg-gray-100 rounded-full text-sm"
+                          className="flex items-center px-3 py-1.5 bg-background/5 rounded-full text-sm"
                         >
                           <span className="mr-1.5">{icon}</span>
                           {feature}
@@ -194,11 +217,11 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
               )}
               
               {/* Contact */}
-              <div className="grid grid-cols-1 gap-2 border-t pt-4 mt-4">
+              <div className="grid grid-cols-1 gap-2 border-t border-border pt-4 mt-4">
                 {hotel.tel && (
                   <a 
                     href={`tel:${hotel.tel}`}
-                    className="flex items-center text-blue-600 hover:text-blue-800 hover:underline"
+                    className="flex items-center text-in-room-marker hover:text-in-room-marker/90 hover:underline"
                   >
                     <Phone className="h-4 w-4 mr-2" />
                     {hotel.tel}
@@ -210,7 +233,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
                     href={hotel.url.startsWith('http') ? hotel.url : `//${hotel.url}`}
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="flex items-center text-blue-600 hover:text-blue-800 hover:underline"
+                    className="flex items-center text-in-room-marker hover:text-in-room-marker/90 hover:underline"
                   >
                     <Globe className="h-4 w-4 mr-2" />
                     Visit Website
@@ -218,7 +241,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
                 )}
                 
                 {hotel.distance_m !== null && hotel.distance_m !== undefined && (
-                  <div className="flex items-center text-gray-600">
+                  <div className="flex items-center text-muted-foreground">
                     <MapPin className="h-4 w-4 mr-2" />
                     {(hotel.distance_m / 1000).toFixed(1)} km away
                   </div>
@@ -229,7 +252,7 @@ export default function HotelDetailModal({ hotel, onClose, className }: HotelDet
         </div>
         
         {/* Footer */}
-        <div className="p-4 border-t mt-auto">
+        <div className="p-4 border-t border-border mt-auto">
           <Button 
             variant="secondary"
             onClick={onClose}

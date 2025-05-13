@@ -41,6 +41,22 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Hotel marker colors - Peloton brand palette */
+  --color-in-room-marker-from: oklch(0.55 0.25 25); /* Peloton red - brighter */
+  --color-in-room-marker-to: oklch(0.45 0.22 20); /* Peloton red - darker */
+  --color-many-bikes-marker-from: oklch(
+    0.5 0.15 340
+  ); /* Deep burgundy - brighter */
+  --color-many-bikes-marker-to: oklch(
+    0.4 0.12 330
+  ); /* Deep burgundy - darker */
+  --color-few-bikes-marker-from: oklch(
+    0.6 0.06 300
+  ); /* Muted purple - brighter */
+  --color-few-bikes-marker-to: oklch(0.47 0.05 290); /* Muted purple - darker */
+  --color-no-bikes-marker-from: oklch(0.55 0.02 0); /* Dark gray - brighter */
+  --color-no-bikes-marker-to: oklch(0.35 0.01 0); /* Dark gray - darker */
 }
 
 :root {
@@ -119,4 +135,78 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Custom marker styles */
+@layer components {
+  .bg-in-room-marker {
+    background: radial-gradient(
+      circle at 30% 30%,
+      var(--color-in-room-marker-from),
+      var(--color-in-room-marker-to)
+    );
+  }
+
+  .bg-many-bikes-marker {
+    background: radial-gradient(
+      circle at 30% 30%,
+      var(--color-many-bikes-marker-from),
+      var(--color-many-bikes-marker-to)
+    );
+  }
+
+  .bg-few-bikes-marker {
+    background: radial-gradient(
+      circle at 30% 30%,
+      var(--color-few-bikes-marker-from),
+      var(--color-few-bikes-marker-to)
+    );
+  }
+
+  .bg-no-bikes-marker {
+    background: radial-gradient(
+      circle at 30% 30%,
+      var(--color-no-bikes-marker-from),
+      var(--color-no-bikes-marker-to)
+    );
+  }
+
+  .text-shadow {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  }
+
+  .scale-105 {
+    transform: scale(1.05);
+  }
+
+  .scale-110 {
+    transform: scale(1.1);
+  }
+
+  .scale-115 {
+    transform: scale(1.15);
+  }
+
+  .scale-120 {
+    transform: scale(1.2);
+  }
+}
+
+@keyframes marker-pulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+}
+
+.animate-marker-pulse {
+  animation: marker-pulse 2s infinite;
 }
