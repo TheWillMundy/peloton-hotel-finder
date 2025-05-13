@@ -1,10 +1,10 @@
 "use client";
 
-import React from 'react';
+import React, { memo } from 'react';
 import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/hotel/HotelCard';
 import HotelCardSkeleton from '@/app/components/hotel/HotelCardSkeleton';
-import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
+import { useAppContext } from '@/app/contexts/AppContext';
 import FilterPanel from '@/app/components/filter/FilterPanel';
 import type { Filters } from '@/app/components/filter/FilterChips';
 
@@ -28,7 +28,8 @@ const HotelListPanel = ({
   hasSearched?: boolean;
   showSkeletons?: boolean;
 }) => {
-  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
+  const { state, dispatch } = useAppContext();
+  const { hoveredHotelId } = state;
 
   const hasActiveFilters = activeFilters.inRoom || activeFilters.inGym || activeFilters.loyaltyPrograms.length > 0;
 
@@ -129,10 +130,10 @@ const HotelListPanel = ({
           <HotelCard 
             key={hotel.id} 
             hotel={hotel} 
-            onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
+            onHover={(id) => dispatch({ type: 'HOTEL_HOVERED', payload: { id, source: 'sidebar' } })}
             onClick={() => onHotelSelect(hotel)}
-            isHovered={hotel.id === uiState.activeHotelId}
-            isAnyHovered={uiState.activeHotelId !== null}
+            isHovered={hotel.id === hoveredHotelId}
+            isAnyHovered={hoveredHotelId !== null}
             isMobile={isMobile}
           />
         ))}
@@ -141,4 +142,4 @@ const HotelListPanel = ({
   );
 };
 
-export default HotelListPanel; 
+export default memo(HotelListPanel); 

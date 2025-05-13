@@ -5,7 +5,7 @@ import { ClientHotel } from '@/lib/pelotonAPI';
 import HotelCard from '@/app/components/hotel/HotelCard';
 import HotelCardSkeleton from '@/app/components/hotel/HotelCardSkeleton';
 import { cn } from '@/lib/utils';
-import { useUIInteraction } from '@/app/contexts/UIInteractionContext';
+import { useAppContext } from '@/app/contexts/AppContext';
 
 const PEEK_HEIGHT_VH = 25; // 25vh for peek state
 const FULL_HEIGHT_VH = 85; // 85vh for full state
@@ -42,7 +42,8 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
   }, 
   ref
 ) => {
-  const { uiState, setActiveHotel, clearActiveHotel } = useUIInteraction();
+  const { state, dispatch } = useAppContext();
+  const { hoveredHotelId } = state;
   const [sheetState, setSheetState] = useState<BottomSheetState>(initialState);
   const [currentHeight, setCurrentHeight] = useState(0); // Store height in px for smoother drag
   
@@ -229,9 +230,9 @@ const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>((
                   key={hotel.id}
                   hotel={hotel}
                   onClick={() => onHotelSelect(hotel)}
-                  onHover={(id) => id !== null ? setActiveHotel(id, 'sidebar_hover') : clearActiveHotel()}
-                  isHovered={hotel.id === uiState.activeHotelId}
-                  isAnyHovered={uiState.activeHotelId !== null}
+                  onHover={(id) => dispatch({ type: 'HOTEL_HOVERED', payload: { id, source: 'sidebar' } })}
+                  isHovered={hotel.id === hoveredHotelId}
+                  isAnyHovered={hoveredHotelId !== null}
                   isMobile={true}
                 />
               ))}
